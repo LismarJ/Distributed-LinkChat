@@ -92,3 +92,53 @@ Step 7 proves R9. Step 4 proves R4. Step 5 proves R5 and R6.
 1. Primary implementation language — see [`../design/architecture-options.md`](../design/architecture-options.md) §7.
 2. Are the written deliverable and the defense in Spanish? These working notes are in English and would need translating.
 3. How many containers will realistically run on one laptop during the defense? This bounds our replication factor and our test topology.
+
+---
+
+## 6. Examiner feedback, 2026-11-11: two phases, Ray first
+
+Sections 1 to 5 were written on 2026-11-10 from the brief alone. On 2026-11-11 the examiners gave the following answers and clarifications. They are constraints of the same weight as the brief.
+
+### 6.1 What the examiners said
+
+| # | Statement | Applies to |
+|---|---|---|
+| E1 | First delivery on **2026-12-01**, second on **2027-01-01** | Both |
+| E2 | The first delivery is built on **Ray** and Python. Use every Ray tool and feature that applies to the project naturally, without forcing any. Do not reimplement what Ray already offers | Phase 1 |
+| E3 | Tolerate **level-two failures**: any two elements (two nodes, two processes, two threads, two machines, any two things) failing simultaneously must not affect the system | Phase 1 |
+| E4 | The head node will not be killed; that is out of scope | Phase 1 |
+| E5 | Partitions do not have to be tolerated | Phase 1 |
+| E6 | The developer is expected to consider most cases and edge cases and how to solve them, knowing that distributed systems have inherent problems that no "magic" solves, and to weigh what is gained and lost: the tradeoffs of the design and of each decision | Both |
+| E7 | **Remove Ray completely** and redesign and implement everything ourselves | Phase 2 |
+| E8 | Partitions **must** be tolerated | Phase 2 |
+
+### 6.2 What each one does to the analysis above
+
+- **E1 replaces the timeline.** Earlier notes speak of "three months" and a "week-1 spike". Phase 1 has 20 days from today and phase 2 has 31 more. The schedule is in [`../design/phase-plan.md`](../design/phase-plan.md).
+- **E2 moves section 2's work to Ray in phase 1.** Containers are still started one by one without Compose, in any order, and are still killed during the demonstration. But dynamic discovery, liveness and restarting failed components are Ray's in phase 1, and writing our own would break the rule. Ray is studied in [`07-ray.md`](07-ray.md), including a feature-by-feature account of what applies to us.
+- **E3 is a new requirement, stricter than anything in sections 1 to 4.** The demo script in section 4 killed one relay. Two simultaneous failures change the replication rule: a message must be on three relays before it is reported as sent ([ADR-0005](../decisions/0005-three-copies-before-sent.md)). The element-by-element analysis is [`../design/fault-tolerance.md`](../design/fault-tolerance.md).
+- **E4 settles the head-node question** we had raised: one head, no recovery ([ADR-0012](../decisions/0012-head-node-policy.md)). The head holds cluster metadata and no messages, so R9 is unaffected.
+- **E5 removes step 5 of section 4** (partition, send 500 messages, heal) from phase 1. It returns in phase 2 under E8.
+- **E6 makes the reasoning a deliverable.** Edge cases and tradeoffs get their own document and are kept current.
+- **E7 and E8 define phase 2.** The design we had before Ray (gossip membership, our own failure detector and transport, in [`../design/architecture-options.md`](../design/architecture-options.md)) becomes the starting point for phase 2, and has to be revised for partitions. Application logic is kept free of Ray from the first day so that it carries over ([ADR-0013](../decisions/0013-ray-free-core-for-phase-2.md)).
+
+### 6.3 The requirements, extended
+
+R1 to R9 stand in both phases. Two requirements are added:
+
+| # | Requirement | Phase 1 | Phase 2 |
+|---|---|---|---|
+| R10 | Fault tolerance | Any two elements failing simultaneously, the head excluded | Not yet stated; assumed at least the same |
+| R11 | Partition tolerance | Not required | Required |
+
+### 6.4 The demonstration, revised for phase 1
+
+The script in section 4 is replaced by the one in [`../design/ray-architecture.md`](../design/ray-architecture.md) section 13. Its core steps: kill two relay containers in one command while a client is sending and show that sending continues and nothing is lost; kill two relay processes; kill a client in the middle of a burst; and, as before, wipe every relay and show both clients' histories intact.
+
+### 6.5 Section 5's open questions, updated
+
+1. Language: Python, now also an examiner requirement for phase 1.
+2. Spanish or English for the written deliverable: still not confirmed.
+3. How many containers fit on one laptop: now a sharper question, because a Ray node is much heavier than a Python process and the target topology is about ten Ray nodes. First item of the spike.
+
+Still to ask the examiners: whether phase 2 keeps the two-failure requirement; whether anything in phase 2 is guaranteed not to fail; whether each delivery is a live defense.
