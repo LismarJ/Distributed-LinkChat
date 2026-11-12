@@ -25,7 +25,7 @@ We do not call `ray.nodes()` or the `ray.util.state` Python SDK from application
 - No discovery or failure-detection code in phase 1, and no membership view that could disagree between processes.
 - The UDP broadcast spike planned earlier is cancelled.
 - Failure handling in the client is driven by call outcomes and timeouts. The timeout value trades failover speed against false suspicion ([`../design/fault-tolerance.md`](../design/fault-tolerance.md), cases 6 and 7).
-- Gossip membership and SWIM are not part of phase 1. They return in phase 2, where Ray is removed ([`../planification/phase-plan.md`](../planification/phase-plan.md)).
+- Gossip membership and SWIM are not part of phase 1. They return in phase 2, where Ray is removed ([`../planning/phase-plan.md`](../planning/phase-plan.md)).
 
 ## To confirm in the spike
 
