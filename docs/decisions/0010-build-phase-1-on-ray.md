@@ -34,7 +34,7 @@ Phase 1 is built on Ray in Python. Every container is a Ray node, relays are Ray
 - **Replication changes to meet two failures** ([ADR-0005](0005-three-copies-before-sent.md)).
 - **The head node is fixed infrastructure** ([ADR-0012](0012-head-node-policy.md)).
 - **A Ray cluster is one trust domain.** In phase 1 we do not describe relays as mutually distrusting.
-- **Phase 2 removes Ray**, so application logic lives in a layer that does not import it ([ADR-0013](0013-ray-free-core-for-phase-2.md)), and the pre-Ray design becomes the starting point for phase 2 (`docs/planification/phase-plan.md`).
+- **Phase 2 removes Ray**, so application logic lives in a layer that does not import it ([ADR-0013](0013-ray-free-core-for-phase-2.md)), and the pre-Ray design becomes the starting point for phase 2 (`docs/planning/phase-plan.md`).
 - **Edge cases and tradeoffs are a deliverable**, kept in `docs/design/fault-tolerance.md`.
 - **Resource estimates made for bare Python processes are void.** A Ray node is much heavier; the spike measures it.
 

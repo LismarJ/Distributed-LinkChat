@@ -57,4 +57,4 @@ Option 1.
 - The number of relays is fixed at bootstrap. Growing it means changing the ring, which phase 1 does not support.
 - Every client is a full Ray node, which costs memory. To be measured.
 - This design depends on Ray behaviours we have read about and not yet seen: restart on another node with a custom resource, waiting when no node has room, handles across restarts. If the spike contradicts any of them, this ADR is revisited before any more is built on it.
-- None of this survives into phase 2 as mechanism. Without Ray nobody restarts a relay, and placement must follow a changing membership ([`../planification/phase-plan.md`](../planification/phase-plan.md)).
+- None of this survives into phase 2 as mechanism. Without Ray nobody restarts a relay, and placement must follow a changing membership ([`../planning/phase-plan.md`](../planning/phase-plan.md)).

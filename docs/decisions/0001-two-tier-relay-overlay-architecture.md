@@ -3,7 +3,7 @@
 **Status:** accepted · **Date:** 2026-11-10 · **Deciders:** project team
 **Amended 2026-11-11:** the project now has two phases ([ADR-0010](0010-build-phase-1-on-ray.md)). The two-tier design stands in both.
 - **Phase 1 (Ray, due 2026-12-01).** Membership, transport and supervision come from Ray ([ADR-0004](0004-discovery-through-ray.md), [ADR-0011](0011-relays-as-ray-supervised-actors.md)). "W = 2" below is replaced by three confirmed copies, to tolerate two simultaneous failures ([ADR-0005](0005-three-copies-before-sent.md)). Relays are not "mutually distrusting" inside one Ray cluster. The option D fallback is not built, since phase 1 does not tolerate partitions.
-- **Phase 2 (no Ray, due 2027-01-01).** The mechanisms listed below (gossip membership, failure detection, placement over a live membership view, our own transport) are the starting point, to be revised for partition tolerance ([`../planification/phase-plan.md`](../planification/phase-plan.md)).
+- **Phase 2 (no Ray, due 2027-01-01).** The mechanisms listed below (gossip membership, failure detection, placement over a live membership view, our own transport) are the starting point, to be revised for partition tolerance ([`../planning/phase-plan.md`](../planning/phase-plan.md)).
 
 ## Context
 

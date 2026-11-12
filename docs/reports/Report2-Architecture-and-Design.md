@@ -313,7 +313,7 @@ Phase 2 removes Ray, so every row in the left-hand column of section 10.3 become
 
 It also removes the assumption that made phase 1 simple. With partitions, a relay that does not answer may be running on the other side, and "three copies, no majority" is no longer safe as stated. Our direction is to stay available on both sides and merge afterwards. That is safe for this system because an envelope never changes and is named by its content, so two sides can only ever hold different sets of envelopes, never different versions of one, and merging two sets is a union. Deletions are the one thing that needs care. This argument has to be worked out in full at the start of phase 2.
 
-To make the move cheap, all application logic is written in a package that does not import Ray and reaches relays only through a small set of interfaces ([ADR-0013](../decisions/0013-ray-free-core-for-phase-2.md)). Cryptography, the client, the mailbox store, the web UI and the tests carry over. The plan and schedule for both phases are in [`../planification/phase-plan.md`](../planification/phase-plan.md).
+To make the move cheap, all application logic is written in a package that does not import Ray and reaches relays only through a small set of interfaces ([ADR-0013](../decisions/0013-ray-free-core-for-phase-2.md)). Cryptography, the client, the mailbox store, the web UI and the tests carry over. The plan and schedule for both phases are in [`../planning/phase-plan.md`](../planning/phase-plan.md).
 
 ---
 
