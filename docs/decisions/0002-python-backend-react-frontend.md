@@ -1,6 +1,7 @@
 # ADR-0002 — Python backend, React frontend
 
 **Status:** accepted · **Date:** 2026-11-10 · **Deciders:** project team
+**Amended 2026-11-11:** Python and React stand for both phases. Phase 1 (due 2026-12-01) runs on Ray, which the examiners require together with Python ([ADR-0010](0010-build-phase-1-on-ray.md)); the memory and image-size estimates below were for bare Python processes and do not apply to Ray nodes (see [`../design/technology-stack.md`](../design/technology-stack.md)). Phase 2 (due 2027-01-01) removes Ray, and the asyncio design and the estimates below apply to it again. The "three-month deadline" and the "week-1 spike on UDP broadcast" mentioned below are out of date: the deadlines are the two delivery dates, and the phase 1 spike is the Ray one in [`../research/07-ray.md`](../research/07-ray.md) section 12. Go as a named fallback no longer applies to phase 1, where Python is a requirement.
 
 ## Context
 
