@@ -4,6 +4,19 @@
 
 The mechanisms we will actually assemble, with the evidence for choosing between them. This is the reference we consult while writing [`../design/architecture-options.md`](../design/architecture-options.md).
 
+> **Update 2026-11-11: which parts apply to which phase.** The project now has two phases ([`../design/phase-plan.md`](../design/phase-plan.md)).
+>
+> | Section | Phase 1 (on Ray, due 2026-12-01) | Phase 2 (no Ray, partitions, due 2027-01-01) |
+> |---|---|---|
+> | 1. Key placement | Applies, simplified: the ring is a fixed set of five relay names, since Ray keeps the relays alive | Applies as written: placement over the live membership |
+> | 2. Membership, discovery, failure detection | **Not built.** Ray provides all three, and the examiners forbid reimplementing them | Applies as written |
+> | 3. Ordering | Applies | Applies |
+> | 4. Replication, quorum, anti-entropy | Changed. Two simultaneous failures require three confirmed copies, not two of three. Without partitions no majority is needed. Repair is sync on restart plus hinted handoff; digest comparison is optional. See section 9 below | To be redesigned for partitions; anti-entropy becomes essential |
+> | 5 to 7. Duplicates, local persistence, retry | Apply. Ray's call retries are added underneath ours | Apply |
+> | 8. What we are not building | Still not built | Still not built |
+>
+> References to a three-month timeline in this note are out of date.
+
 ---
 
 ## 1. Overlay and key placement: which DHT, or none at all
@@ -150,6 +163,26 @@ Saying this clearly at the defense is worth more than half-building any of it:
 - **Post-quantum (PQXDH / Triple Ratchet).** Explain, do not build.
 
 ---
+
+## 9. Added 2026-11-11: how many copies, and when a majority is needed
+
+The examiners require phase 1 to survive any two simultaneous failures and do not require it to survive partitions. Phase 2 requires partitions. The two cases call for different replication rules, and the difference is worth having in the toolbox.
+
+**Crash failures with a reliable way to know who is down.** To survive `f` crashes, keep `f + 1` copies. One survives, and since a node that does not answer really is dead, whoever is left can be trusted to be the only one acting. For `f = 2`: three copies, all written before the write is confirmed. This is what primary-backup systems and chain replication do, and they rely on an external service to say who is alive. In phase 1 that service is Ray.
+
+**Crash failures where silence is ambiguous.** In a partition, a node that does not answer may be running and accepting writes on the other side. If the system must give one consistent answer (who is the leader, what is the value), it needs majorities: `2f + 1` nodes, with every decision confirmed by `f + 1`, so that any two decisions share a node. That is what Paxos and Raft do, and it stops the minority side from working.
+
+**The third way, for data that cannot conflict.** If the data is a set of immutable items, two sides of a partition can both keep accepting items and merge by union afterwards. No majority is needed, both sides stay available, and the cost is that readers may see an incomplete set until the merge. Dynamo's sloppy quorums with hinted handoff and anti-entropy are the standard form. Our envelopes are immutable and named by their content hash, so they fit. Deletion is the one operation that needs care, and tombstones cover it.
+
+| | Copies | Confirm at | Needs | Under partition |
+|---|---|---|---|---|
+| Phase 1: `f + 1`, no majority | 3 | 3, with stand-ins | A trusted source of liveness (Ray) | Not safe |
+| Majority quorum | 5 for `f = 2` | 3 | Nothing external | Safe; minority side stops |
+| Union-merge with anti-entropy | 3 or more | Tunable | Immutable, content-named data | Safe and available; temporarily incomplete reads |
+
+Phase 1 uses the first row with Dynamo-style stand-ins. Phase 2 is expected to use the third.
+
+Reading for this section: Dynamo (DeCandia et al., SOSP 2007) for sloppy quorum and hinted handoff; chain replication (van Renesse and Schneider, OSDI 2004) for `f + 1` with an external membership service; the Raft paper (Ongaro and Ousterhout, 2014) for majorities. These are cited from our knowledge of the papers; they were not re-read for this note.
 
 ## Sources
 
