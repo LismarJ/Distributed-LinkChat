@@ -61,7 +61,7 @@ Sections 1 to 4 describe phase 1 (due 2026-12-01). Section 5 lists what changes 
 | Client HTTP/WS server | **FastAPI** + **Uvicorn**, one worker, in the driver process | MIT / BSD | No forking after Ray starts (a documented Ray anti-pattern) |
 | Crypto primitives | **PyNaCl** (libsodium: X25519, Ed25519, XChaCha20-Poly1305, BLAKE2b) | Apache-2.0 *(confirm)* | |
 | KDF and extras | **`cryptography`** (HKDF, AEAD) | Apache-2.0 / BSD *(confirm)* | |
-| X3DH and Double Ratchet | Undecided: our implementation over the above, or `python-x3dh` + `DoubleRatchet` | ours / MIT *(confirm)* | ADR-0009, to decide in the first week; see [`phase-plan.md`](phase-plan.md) section 4 |
+| X3DH and Double Ratchet | Undecided: our implementation over the above, or `python-x3dh` + `DoubleRatchet` | ours / MIT *(confirm)* | ADR-0009, to decide in the first week; see [`phase-plan.md`](../planification/phase-plan.md) section 4 |
 | Client persistence | **SQLite** (`aiosqlite`), WAL mode, on a Docker volume | MIT / PSF | Identity, sessions, outbox, seen-set, history |
 | Relay persistence | Actor memory: dict plus `heapq` TTL index | stdlib | No disk and no checkpoint. Durability comes from three copies |
 | Packaging | **`uv`** with a committed `uv.lock` | MIT / Apache-2.0 | |

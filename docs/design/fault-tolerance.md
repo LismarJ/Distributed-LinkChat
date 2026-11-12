@@ -46,7 +46,7 @@ Majority quorums (`2f + 1` nodes, confirm at `f + 1`) exist for a different prob
 | Relays needed to keep writing with 2 down | 5 | Depends on the rule |
 | What goes wrong if the assumption fails | A partition could leave a record's three holders on the far side | (designed for it) |
 
-The last row is the price. This design is correct only under the stated assumption, and phase 2 removes the assumption. See [`phase-plan.md`](phase-plan.md).
+The last row is the price. This design is correct only under the stated assumption, and phase 2 removes the assumption. See [`phase-plan.md`](../planification/phase-plan.md).
 
 ## 3. Element by element
 

@@ -16,7 +16,7 @@ The examiners have split the project into two phases:
 
 No code exists yet. The phase 1 design is written and rests on Ray behaviour we have read about and not yet run; the first task is the spike listed in [`research/07-ray.md`](research/07-ray.md) section 12.
 
-**Where to start reading:** [`design/phase-1-work-plan.md`](design/phase-1-work-plan.md) for what to do next, [`design/ray-architecture.md`](design/ray-architecture.md) for the phase 1 design, [`design/fault-tolerance.md`](design/fault-tolerance.md) for failures, edge cases and tradeoffs, [`design/phase-plan.md`](design/phase-plan.md) for how the two phases relate.
+**Where to start reading:** [`planification/phase-1-work-plan.md`](planification/phase-1-work-plan.md) for what to do next, [`design/ray-architecture.md`](design/ray-architecture.md) for the phase 1 design, [`design/fault-tolerance.md`](design/fault-tolerance.md) for failures, edge cases and tradeoffs, [`planification/phase-plan.md`](planification/phase-plan.md) for how the two phases relate.
 
 ## Reports
 
@@ -40,12 +40,17 @@ The notes below are the sources the reports are built from; they keep the full d
 | [`research/06-distributed-primitives.md`](research/06-distributed-primitives.md) | The toolbox: placement, membership, clocks, replication, dedup, retry. A table at the top says which parts apply to which phase; section 9 covers how many copies and when a majority is needed |
 | [`research/07-ray.md`](research/07-ray.md) | Ray: primitives, cluster layout, actors in depth, fault tolerance, deployment in Docker, security, **every Ray feature and whether it applies to us**, Ray's patterns and anti-patterns, the spike list |
 
+## Planification
+
+| Doc | What it covers |
+|---|---|
+| [`planification/phase-1-work-plan.md`](planification/phase-1-work-plan.md) | **What to do next.** The execution plan for phase 1: definition of done, the split between the two developers, six gates starting with the Ray spike, every task with owner, dependency and done-when check, the person-day budget, how to use Claude Code, the cut list and the risks |
+| [`planification/phase-plan.md`](planification/phase-plan.md) | The two phases: what each requires, what phase 2 must replace, what carries over, the milestone schedule and the scope priorities |
+
 ## Design
 
 | Doc | What it covers |
 |---|---|
-| [`design/phase-plan.md`](design/phase-plan.md) | The two phases: what each requires, what phase 2 must replace, what carries over, the schedule and scope priorities |
-| [`design/phase-1-work-plan.md`](design/phase-1-work-plan.md) | **The execution plan for phase 1.** Definition of done, the split between the two developers, six gates, every task with owner and dependencies, the person-day budget, how to use Claude Code, the cut list and the risks |
 | [`design/ray-architecture.md`](design/ray-architecture.md) | **The phase 1 design.** Five named relay actors supervised by Ray, the fixed ring, send/receive/forget, repair, the client, security claims, design patterns, code structure, the demonstration |
 | [`design/fault-tolerance.md`](design/fault-tolerance.md) | The fault model, why three copies and no majority, element-by-element and pair analysis, eighteen edge cases, what each decision gains and loses, how each claim is tested |
 | [`design/technology-stack.md`](design/technology-stack.md) | Component-by-component stack for phase 1, with licences, and what changes in phase 2 |

@@ -3,7 +3,7 @@
 **Status:** working plan, to be adjusted after the spike · **Date:** 2026-11-11
 **For:** the two developers on the team, working with Claude Code
 **Delivery:** 2026-12-01 (20 calendar days from today)
-**Design this executes:** [`ray-architecture.md`](ray-architecture.md) · [`fault-tolerance.md`](fault-tolerance.md) · [`phase-plan.md`](phase-plan.md) (the two phases) · [`../research/07-ray.md`](../research/07-ray.md) (Ray, and the spike list)
+**Design this executes:** [`ray-architecture.md`](../design/ray-architecture.md) · [`fault-tolerance.md`](../design/fault-tolerance.md) · [`phase-plan.md`](phase-plan.md) (the two phases) · [`../research/07-ray.md`](../research/07-ray.md) (Ray, and the spike list)
 
 ---
 

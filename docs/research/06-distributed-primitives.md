@@ -4,7 +4,7 @@
 
 The mechanisms we will actually assemble, with the evidence for choosing between them. This is the reference we consult while writing [`../design/architecture-options.md`](../design/architecture-options.md).
 
-> **Update 2026-11-11: which parts apply to which phase.** The project now has two phases ([`../design/phase-plan.md`](../design/phase-plan.md)).
+> **Update 2026-11-11: which parts apply to which phase.** The project now has two phases ([`../planification/phase-plan.md`](../planification/phase-plan.md)).
 >
 > | Section | Phase 1 (on Ray, due 2026-12-01) | Phase 2 (no Ray, partitions, due 2027-01-01) |
 > |---|---|---|
