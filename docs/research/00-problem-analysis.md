@@ -114,7 +114,7 @@ Sections 1 to 5 were written on 2026-11-10 from the brief alone. On 2026-11-11 t
 
 ### 6.2 What each one does to the analysis above
 
-- **E1 replaces the timeline.** Earlier notes speak of "three months" and a "week-1 spike". Phase 1 has 20 days from today and phase 2 has 31 more. The schedule is in [`../design/phase-plan.md`](../design/phase-plan.md).
+- **E1 replaces the timeline.** Earlier notes speak of "three months" and a "week-1 spike". Phase 1 has 20 days from today and phase 2 has 31 more. The schedule is in [`../planification/phase-plan.md`](../planification/phase-plan.md).
 - **E2 moves section 2's work to Ray in phase 1.** Containers are still started one by one without Compose, in any order, and are still killed during the demonstration. But dynamic discovery, liveness and restarting failed components are Ray's in phase 1, and writing our own would break the rule. Ray is studied in [`07-ray.md`](07-ray.md), including a feature-by-feature account of what applies to us.
 - **E3 is a new requirement, stricter than anything in sections 1 to 4.** The demo script in section 4 killed one relay. Two simultaneous failures change the replication rule: a message must be on three relays before it is reported as sent ([ADR-0005](../decisions/0005-three-copies-before-sent.md)). The element-by-element analysis is [`../design/fault-tolerance.md`](../design/fault-tolerance.md).
 - **E4 settles the head-node question** we had raised: one head, no recovery ([ADR-0012](../decisions/0012-head-node-policy.md)). The head holds cluster metadata and no messages, so R9 is unaffected.

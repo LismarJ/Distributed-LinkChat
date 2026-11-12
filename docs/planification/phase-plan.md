@@ -43,13 +43,13 @@ And the assumptions phase 1 is allowed to make stop holding:
 | A restarted relay syncs once and is correct | Two sides accept writes separately and must merge afterwards | Continuous anti-entropy with digests becomes essential, not optional |
 | One trust domain | Relays can be independent | The stronger threat model returns |
 
-This is the design that existed before the Ray requirement: [`architecture-options.md`](architecture-options.md), option C with option D (gossip flooding) as a partition-mode fallback. It is not thrown away; it is the starting point for phase 2, to be revised once phase 1 has taught us what was hard.
+This is the design that existed before the Ray requirement: [`architecture-options.md`](../design/architecture-options.md), option C with option D (gossip flooding) as a partition-mode fallback. It is not thrown away; it is the starting point for phase 2, to be revised once phase 1 has taught us what was hard.
 
 **Choosing availability under partition.** For messaging, a user on either side of a partition should still be able to send to anyone reachable, and messages should merge when the partition heals. That is an AP choice, and it is safe for us because envelopes are immutable and identified by content: two sides can never hold conflicting versions of the same record, only different sets of records, and merging sets is a union. The one piece of state that does conflict is deletion, which tombstones handle. This argument is the core of the phase 2 design and has not been written up in full yet.
 
 ## 3. What carries over unchanged
 
-Everything in `linkchat.core` ([`ray-architecture.md`](ray-architecture.md) section 11):
+Everything in `linkchat.core` ([`ray-architecture.md`](../design/ray-architecture.md) section 11):
 
 - identity, X3DH, Double Ratchet;
 - envelope format, padding, content-hash IDs;

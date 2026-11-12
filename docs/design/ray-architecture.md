@@ -2,7 +2,7 @@
 
 **Status:** proposed, pending team review and the spike · **Date:** 2026-11-11, second revision
 **Delivery:** 2026-12-01
-**Inputs:** [`../research/07-ray.md`](../research/07-ray.md) for everything said about Ray; [`architecture-options.md`](architecture-options.md) for the comparison that chose the two-tier relay design ([ADR-0001](../decisions/0001-two-tier-relay-overlay-architecture.md)); [`fault-tolerance.md`](fault-tolerance.md) for the failure analysis; [`phase-plan.md`](phase-plan.md) for what moves to phase 2.
+**Inputs:** [`../research/07-ray.md`](../research/07-ray.md) for everything said about Ray; [`architecture-options.md`](architecture-options.md) for the comparison that chose the two-tier relay design ([ADR-0001](../decisions/0001-two-tier-relay-overlay-architecture.md)); [`fault-tolerance.md`](fault-tolerance.md) for the failure analysis; [`phase-plan.md`](../planification/phase-plan.md) for what moves to phase 2.
 
 **What changed in this revision.** The first Ray design (earlier the same day) pinned one relay to each container and told Ray never to restart it, so that we handled every failure ourselves. The examiners have since clarified the rules, and that design broke two of them:
 
@@ -128,7 +128,7 @@ The ring is fixed and known to everyone from two constants: the namespace and `R
 - The **preference list** of a mailbox is all `R` relays in clockwise order starting from the mailbox's point.
 - The first three relays on that list are the mailbox's **primaries**. The remaining ones are **stand-ins**, used only while a primary is unreachable.
 
-Because the ring never changes, clients and relays always compute the same list. There is no membership view to keep in step, no rebalancing when a container dies, and no directory to refresh. This is the largest simplification that Ray's supervision buys us, and it is specific to phase 1: in phase 2 nobody restarts a relay for us and membership will change (see [`phase-plan.md`](phase-plan.md)).
+Because the ring never changes, clients and relays always compute the same list. There is no membership view to keep in step, no rebalancing when a container dies, and no directory to refresh. This is the largest simplification that Ray's supervision buys us, and it is specific to phase 1: in phase 2 nobody restarts a relay for us and membership will change (see [`phase-plan.md`](../planification/phase-plan.md)).
 
 Clients hold one handle per relay name, obtained once with `ray.get_actor`. Whether a handle keeps working across a restart is a spike item; if it does not, the client re-resolves the name after an error.
 
@@ -287,5 +287,5 @@ Step 9 is more than two failures, and it is there to show R9 and R7, not fault t
 - ADR-0006: TTL, and what the sender sees when a message expires undelivered.
 - ADR-0007: mailbox identifiers, the invitation format, and the credential for `fetch` and `ack`.
 - ADR-0008: the relay actor interface and the envelope format.
-- ADR-0009: write the ratchet ourselves or adopt a library. With delivery on 2026-12-01 this needs deciding in the first week ([`phase-plan.md`](phase-plan.md)).
+- ADR-0009: write the ratchet ourselves or adopt a library. With delivery on 2026-12-01 this needs deciding in the first week ([`phase-plan.md`](../planification/phase-plan.md)).
 - Ray version to pin, and base image.
