@@ -3,6 +3,11 @@
 **Project:** P08 · Mensajería segura descentralizada, Sistemas Distribuidos 2026, Universidad de La Habana, Facultad de Matemática y Computación
 **For:** the development team · **Date:** 2026-11-11
 
+> **How this report is organised (revised 2026-11-11).** The project has two phases. Phase 1 (due 2026-12-01) is built on Ray and must survive any two simultaneous failures. Phase 2 (due 2027-01-01) removes Ray and must also survive network partitions.
+>
+> - **Sections 1 to 7** compare five architectures and were written before the examiners set those rules. The comparison and its conclusion stand. Where section 4 describes option C's mechanisms (gossip membership, a write quorum of two, mutually distrusting relays, the option D fallback), read it as the form option C takes in phase 2.
+> - **Sections 8 to 15** were rewritten on 2026-11-11: the decision, the two phases, the phase 1 design on Ray, the failure analysis, the tradeoffs, the outline of phase 2, and the stack.
+
 ## 1. The one question every architecture has to answer
 
 Every design for this problem is an answer to the same question: **the recipient's device is switched off; who holds the message, for how long, and how do we find them?**
@@ -171,104 +176,194 @@ A few of these cells rest on reasoning that sections 2 through 6 don't spell out
 
 ## 8. The decision
 
-**Build option C, with option D folded in as its partition-mode fallback.** This is [ADR-0001](../decisions/0001-two-tier-relay-overlay-architecture.md).
+**Build option C.** This is [ADR-0001](../decisions/0001-two-tier-relay-overlay-architecture.md), and it holds for both phases of the project.
 
-In one sentence: a two-tier architecture in which self-organizing, mutually distrusting relay nodes form a gossip-maintained overlay and hold padded ciphertext in consistently-hashed, quorum-replicated, TTL-bounded mailboxes addressed by opaque identifiers, while all plaintext, all identity, and all permanent history live exclusively on client nodes.
+In one sentence: a two-tier architecture in which relay nodes hold padded ciphertext in replicated, TTL-bounded mailboxes addressed by opaque identifiers, while all plaintext, all identity, and all permanent history live exclusively on client nodes.
 
-It holds up against each of the three named references for a specific reason. Against WhatsApp: the same amnesiac queue semantics and the same delivery-state UX, just with no operator behind them. Against Matrix: the same causal event model and retry discipline, minus permanent server-side history and minus the need for state resolution. Against Signal: the same cryptography on infrastructure we don't have to trust the way Signal's server is trusted (mechanism 8 and section 4's closing caveat on what that trust actually buys), and less metadata exposed than even sealed sender achieves.
+It holds up against each of the three named references for a specific reason. Against WhatsApp: the same amnesiac queue semantics and the same delivery-state UX, with no operator behind them. Against Matrix: the same causal event model and retry discipline, minus permanent server-side history and minus the need for state resolution. Against Signal: the same cryptography, and less metadata exposed than even sealed sender achieves.
 
-To retire the implementation risk early rather than discover it in month three, we're building a thin vertical slice first: two clients, one relay, no replication, no ratchet yet, plaintext envelopes, just proving store-and-forward end to end. Replication and gossip come next, then the ratchet, then churn, anti-entropy, and the actual demo script. The detailed milestones belong in the implementation plan, not here.
+What sections 2 to 7 could not know is that the examiners would split the project in two and prescribe the platform for the first half. The rest of this report is about that.
 
 ---
 
-## 9. Technology stack
+## 9. Two phases, two sets of rules
 
-Option C is an architecture; this section is what we're actually going to type. [ADR-0002](../decisions/0002-python-backend-react-frontend.md) records the language decision itself, with the reasoning and the mitigations for the risks it carries. This section is the resulting component-by-component stack, all free and open source, as the project requires.
+On 2026-11-11 the examiners clarified what is expected. The full list is in [`../research/00-problem-analysis.md`](../research/00-problem-analysis.md) section 6.
 
-### 9.1 Why Python, briefly
-
-The state-of-the-art study's own comparison (Go, TypeScript/Node, Rust, Elixir/OTP, Python) rated Go ahead on container size, startup time, and concurrency, and Elixir as thematically perfect given WhatsApp's own lineage. The team chose Python and React anyway, on team familiarity and velocity against a three-month deadline, which is a reasonable trade given that the distributed-systems design is what's actually graded, not the runtime it's written in.
-
-Two risks from that comparison are worth naming because they're easy to overstate. The 150 MB per-container figure in that original comparison was a rough estimate for an unoptimized image; our actual build target is a multi-stage build on `python:3.12-slim` (section 9.5) at under 120 MB, and that cost is paid once per *image*, not once per container. Separately, and this is a different resource entirely, twenty relay containers sharing that one image cost roughly 40 to 70 MB of RAM each at runtime. What's actually slower in practice is build and pull time during iteration, which `uv` and a committed lockfile keep manageable. And the expensive cryptographic operations run inside PyNaCl and `cryptography`, both C or Rust extensions that release the GIL, so the ratchet isn't GIL-bound at the message rates this project will see.
-
-### 9.2 Component map
-
-```
-┌─ CLIENT NODE (container) ──────────────────────────────┐
-│  React + Vite + TS  ──WebSocket──►  FastAPI / Uvicorn  │
-│  (browser on host)                       │             │
-│                                   asyncio core:        │
-│                                   · identity & keys    │
-│                                   · X3DH + ratchet     │
-│                                   · outbox + retry     │
-│                                   · causal reorder     │
-│                                   · dedup (seen-set)   │
-│                                   · aiosqlite ← HISTORY│
-└───────────────────────────┬────────────────────────────┘
-                            │ WS (subscribe) + HTTP (poll)
-┌─ RELAY NODE (container) ──▼────────────────────────────┐
-│  asyncio TCP server (length-prefixed binary frames)    │
-│  asyncio DatagramProtocol (gossip / UDP discovery)     │
-│  · SWIM-style membership + failure detection           │
-│  · consistent hashing → placement(mailbox_id)          │
-│  · in-memory mailbox store + TTL expiry heap           │
-│  · anti-entropy (Merkle digest) with placement peers   │
-│  NO plaintext · NO history API · NO logs of content    │
-└────────────────────────────────────────────────────────┘
-```
-
-### 9.3 Backend
-
-| Concern | Choice | Licence | Notes |
-|---|---|---|---|
-| Runtime | **Python 3.12+** | PSF | `asyncio` throughout; no threads for I/O |
-| Relay-to-relay transport | **`asyncio` streams**, length-prefixed binary frames over TCP | stdlib | Hand-rolled; keeps the wire format fully ours and inspectable |
-| Gossip / discovery | **`asyncio.DatagramProtocol`** over UDP | stdlib | Seed addresses primary; broadcast as a zero-config convenience |
-| Client-to-relay | WebSocket (subscribe) + HTTP (poll fallback) | n/a | `websockets` or Starlette's own WS support |
-| Client HTTP/WS server | **FastAPI** + **Uvicorn** | MIT / BSD | Serves the React build and the API |
-| Crypto primitives | **PyNaCl** (libsodium: X25519, Ed25519, XChaCha20-Poly1305, BLAKE2b) | Apache-2.0 *(confirm)* | C extension, releases the GIL |
-| KDF / extras | **`cryptography`** (HKDF, AEAD) | Apache-2.0 / BSD *(confirm)* | Rust-backed |
-| X3DH + Double Ratchet | Implemented over the above, against the published specs and official test vectors | ours | Fallback: `python-x3dh` (MIT) plus `DoubleRatchet` (python-omemo family); see ADR-0009 |
-| Message encoding | **msgpack** (`msgpack` / `ormsgpack`) or **protobuf**, fixed-size padded | n/a | Padding removes length as a metadata channel, SimpleX's rule |
-| Client persistence | **`aiosqlite`** over stdlib `sqlite3` | MIT / PSF | The only permanent home of history |
-| Relay persistence | In-memory dict plus a `heapq` TTL index; no disk persistence | stdlib | Durability comes from replication across the placement set, not from local storage. Keeping this in-memory-only is what makes the "no logs" claim in section 4 true rather than aspirational |
-| Packaging | **`uv`** with a committed `uv.lock` | MIT/Apache-2.0 | Fast, deterministic Docker builds |
-| Lint / types | **`ruff`** plus **`mypy --strict`** on the protocol and state-machine modules | MIT | A type error in the ratchet is a correctness bug, not a style one |
-| Tests | **`pytest`** plus **`pytest-asyncio`**, plus a scripted churn harness driving the Docker CLI | MIT | The harness is itself a project deliverable |
-
-### 9.4 Frontend
-
-| Concern | Choice | Notes |
+| | Phase 1 | Phase 2 |
 |---|---|---|
-| Framework | React 18 + TypeScript | |
-| Build | Vite | Built assets served by FastAPI from the client container |
-| Transport | WebSocket to the client node | Live message and delivery-state updates |
-| Key UI element | A delivery-state indicator per message: `pending` (no relay reachable) → `sent` (write quorum met) → `delivered` (recipient ACKed) → `read` | This is our main demo instrument: it makes the quorum and the ACK chain visible on screen the moment a grader kills a relay |
-| Secondary view | A relay-overlay view: live membership, placement assignment, per-mailbox replication depth | Turns the gossip layer into something a grader can actually watch during the defense |
+| Delivery | 2026-12-01 | 2027-01-01 |
+| Platform | Ray and Python. Use every Ray feature that applies naturally; do not reimplement what Ray offers | No Ray. Everything redesigned and implemented by us |
+| Failures | Any two elements at the same time must not affect the system | Not yet stated |
+| Partitions | Not required | Required |
+| Head node | Never killed | Does not exist |
 
-### 9.5 Containers and orchestration
+They also said what they are looking for beyond working software: that we think through the cases and edge cases, accept that distributed systems have problems nothing solves completely, and can say what each decision gains and what it costs.
 
-The base image is `python:3.12-slim`, built multi-stage and pinned by digest, targeting under 120 MB. There are exactly two images, `linkchat-relay` and `linkchat-client`. Networking is `docker network create --subnet=… linkchat-net`, followed by individual `docker run` calls; orchestration is shell scripts only, since Compose is forbidden by the course rules, living in `scripts/`: `up-relay.sh`, `up-client.sh`, `chaos-kill.sh`, `partition.sh`, `demo.sh`. Nodes announce their own readiness on the gossip channel, and the scripts wait on that signal rather than on a `sleep`. The first node up has nobody to announce to yet; per Report 1's discovery design, a node started with no reachable seeds simply forms a cluster of one and is joined later when a second node seeds *to* it, so there's no actual deadlock, just a one-node cluster until company arrives.
+Option C survives all of this, but it is built twice. In phase 1 Ray supplies the machinery around the relays, and our work is the data. In phase 2 we supply the machinery too. Section 4's description of option C, with gossip membership, a failure detector and our own wire protocol, is the phase 2 form. Sections 10 to 12 describe the phase 1 form.
 
 ---
 
-## 10. Decisions still open
+## 10. Phase 1: option C on Ray
 
-Every number and mechanism in sections 2 through 9 that reads as settled, the `k = 3` / `w = 2` quorum, the TTL, the discovery path, the ratchet's build-vs-adopt choice, is the team's current working assumption, not a closed decision. Each becomes real only once its ADR below is written, and this list is the one to trust if anything above reads more settled than it actually is.
+The detailed design is [`../design/ray-architecture.md`](../design/ray-architecture.md), and what we learned about Ray is in [`../research/07-ray.md`](../research/07-ray.md). This section is the summary.
 
-**To record as ADRs:**
+### 10.1 Ray in five sentences
 
-1. Discovery mechanism, confirmed after the week-1 multicast spike on Docker Desktop/WSL2, including where a relay's seed-address list actually comes from at container start (environment variable, mounted file, or CLI flag). → ADR-0004.
-2. Replication factor `k` and write quorum `w` (provisionally 3 and 2), plus the conflict-resolution rule for when two relays' anti-entropy digests disagree about a mailbox's contents. → ADR-0005.
-3. Default message TTL, and the retry/backoff/drop policy that the Matrix spec leaves undefined. → ADR-0006.
-4. Mailbox identifier derivation: one shared mailbox per conversation, or two unidirectional ones as SimpleX does; the format of the out-of-band invitation string that seeds it; and what, if anything, proves a client is entitled to write, read, or delete a given mailbox, since an opaque ID known to anyone is writable by anyone. → ADR-0007. The first part is the privacy-bearing decision Report 1 flagged and hasn't resolved either; the authorization question is new and at least as important.
-5. Wire protocol: encoding (msgpack vs. protobuf), framing, and the actual message-type schema (store, retrieve, ack, gossip/membership update, Merkle-digest exchange, storage-audit challenge and response). Encoding alone isn't enough for anyone to start coding against; the message types are. → ADR-0008.
-6. Implement the ratchet ourselves versus adopting `python-x3dh` + `DoubleRatchet`, decided after the week-1 spike. → ADR-0009.
+Ray runs Python across a cluster. An **actor** is a Python object living in its own process on some node; other processes call its methods remotely. One **head node** keeps the cluster's directory: which nodes are alive and where each actor is. If an actor's process or node dies, Ray can **restart** it, on another node if necessary, but it comes back empty, because Ray does not keep application state. Ray's own documentation says that for state, "the application is responsible".
 
-**Open questions that aren't yet ADR-shaped:**
+That last point is the whole division of labour: **Ray keeps the relays alive; we keep the data alive.**
 
-- How many containers will realistically run on one laptop at the defense? This bounds `k`, the placement-set size, and the whole test topology. The memory budget from ADR-0002 (roughly 40 to 70 MB per Python container) makes a reasonably large topology feasible, but it should be tested, not assumed.
-- Is the direct client-to-client fast path (mechanism 11 in section 4) worth the extra code, or should every message go through the overlay for uniformity?
-- Is the option D gossip fallback in scope for v1, given it's a small amount of code for a disproportionately good demo moment?
-- Does the course require the written report itself in Spanish? Cheap to confirm now, expensive to discover in month three; already flagged in [ADR-0003](../decisions/0003-english-for-all-documentation.md).
+### 10.2 The cluster
 
+```
+                 HEAD (never killed): cluster directory, dashboard
+                                   │
+   ┌───────────┬───────────┬───────┴───┬───────────┬───────────┬──────────────┐
+ relay node  relay node  relay node  relay node  relay node  spare      CLIENT nodes
+ relay-0     relay-1     relay-2     relay-3     relay-4     nodes      keys, ratchet,
+                                                                         SQLite, UI
+```
+
+- **Five relays**, `relay-0` to `relay-4`. They are named Ray actors, and the name is the relay's identity. Which container runs `relay-2` at a given moment is Ray's business.
+- **Relay nodes** are identical containers that each offer one slot for a relay. If a relay's process crashes, Ray restarts it where it was. If its container is killed, Ray restarts it on a node with a free slot. Two spare nodes mean two killed containers can both be replaced without anyone starting anything.
+- **Each client** is its user's own program, in its own container, joined to the cluster so that it can call relays. It holds the keys, the conversation state and the history.
+- **The head** runs Ray's control plane and nothing of ours.
+
+Each container is started with its own `docker run`; there is no Compose. The only address configured anywhere is the head's container name.
+
+### 10.3 What Ray does and what we do
+
+| Ray does | We do |
+|---|---|
+| Nodes finding each other; knowing who is alive | Deciding which three relays hold a mailbox |
+| Remote calls between processes | Writing three copies before telling the sender `sent` |
+| The directory of relays, by name | Refilling a restarted, empty relay from the others |
+| Restarting a failed relay, moving it off a dead node | Deleting on acknowledgement and on expiry |
+| Retrying a call that arrived during a restart | Ordering messages and removing duplicates |
+| At most one relay per node | Identity, encryption, local history |
+| Access control for the cluster; dashboard and metrics | |
+
+Nothing in the right-hand column exists in Ray, so building it is not reimplementing Ray. We went through Ray's features one by one to check this in both directions. Several that look relevant turn out to be wrong for us. The clearest example is Ray's shared object store: an object in it dies with the process that created it, which would be the sender, so a message stored that way would vanish when the sender went offline. The same goes for Ray's documented recipe for restoring an actor's state from a checkpoint on shared storage: that checkpoint would be a durable store of every mailbox, which is what R9 forbids. The full table is in the research note, section 10.
+
+### 10.4 A message's path
+
+1. A's client encrypts the message, pads it to a fixed size, names it by the hash of the ciphertext, and writes it to its outbox.
+2. It computes the mailbox's **preference list**: the five relays in ring order starting from the mailbox's position. The first three are the mailbox's primaries.
+3. It stores the envelope on the three primaries at once. If one does not answer in time, the next relay on the list stands in for it and remembers which primary it is covering for.
+4. When three different relays have confirmed, the message shows `sent`.
+5. B's client, when it comes online, asks the first three ready relays on the same list, merges what they return, decrypts, puts the messages in order, saves them, and only then acknowledges.
+6. Acknowledged envelopes are deleted, and a marker is kept so a late copy cannot bring them back. Everything else is deleted when its time-to-live runs out.
+
+A relay that has just been restarted is empty. It answers "syncing" until it has copied its share from the other relays, and only then serves clients. A stand-in hands its covered envelopes back to the primary once the primary is ready.
+
+---
+
+## 11. Two simultaneous failures
+
+The analysis is [`../design/fault-tolerance.md`](../design/fault-tolerance.md). The reasoning in short:
+
+**Why three copies, confirmed before `sent`.** To survive two crashes a record must be on three nodes. Our earlier working numbers were "write to three, confirm at two". With those, the two relays that confirmed could be the two that die. So the confirmation now waits for all three ([ADR-0005](../decisions/0005-three-copies-before-sent.md)).
+
+**Why five relays.** With two down, three are left, which is what a write needs. The stand-in rule is what lets those three be any three.
+
+**Why not a majority quorum.** Majorities exist to tell a crashed node from a node on the far side of a partition. Phase 1 has no partitions and Ray tells us who is alive, so three copies are enough. This is the largest shortcut in the phase 1 design, and it is exactly what phase 2 takes away.
+
+| What fails | What recovers it | What users notice |
+|---|---|---|
+| A relay's process | Ray restarts it in place; it refills from peers | Nothing |
+| A relay's container | Ray restarts the relay on a spare node; it refills from peers | Nothing |
+| Two primaries of the same mailbox | The third holds every confirmed message; stand-ins take new ones | Nothing |
+| A background job inside a relay | A wrapper restarts it; if it keeps failing the relay exits and Ray restarts it | Nothing |
+| A client | The user restarts it; the outbox resumes and unacknowledged mail is fetched again | That user is offline meanwhile |
+| The head | Out of scope; not recovered | The cluster stops; local history survives |
+| Three holders of one message at once | Nothing | That undelivered message is lost |
+
+The last two rows are the limits, and we state them without softening.
+
+---
+
+## 12. Edge cases and what each decision costs
+
+The examiners asked for this kind of reasoning explicitly, so it has its own document with eighteen cases. A selection:
+
+- **A call fails and we cannot tell whether it ran.** Ray says so itself. We never try to find out: every relay operation can be repeated safely because envelopes are named by their content.
+- **The acknowledgement is lost.** The relay keeps the envelope until it expires and offers it again; the client recognises it and discards it. So "deleted on acknowledgement" is a best effort, and "deleted at expiry" is the guarantee.
+- **A relay is slow, not dead.** The client's timeout treats it as dead and uses a stand-in. A short timeout means fast failover and more false alarms; a long one means the opposite. There is no right value, only a chosen one.
+- **A message expires before the recipient comes back.** "Deliver to offline users" and "do not become an archive" collide here, and no mechanism satisfies both without limit. We pick a time-to-live, and the sender is told the message was not delivered.
+- **Two senders get the same one-time prekey.** Preventing it would need relays to agree on every read, which is the consensus we chose not to build. We accept a slightly weaker first message in that case.
+
+| Decision | Gains | Loses |
+|---|---|---|
+| Three copies, no majority | Survives two crashes with five relays | Not safe under partitions |
+| Stand-ins and handoff | Sending continues with two relays down | More states to reason about |
+| A fixed ring of named relays | No membership tracking, no rebalancing | The relay count is fixed; depends on Ray for recovery |
+| Ray restarts relays | No supervisor of ours | Recovery is as fast as Ray, which may be tens of seconds |
+| No disk and no checkpoint on relays | R9 holds by construction | Every restart is a full refill; three lost holders lose data |
+| Idempotent operations with retries | Ambiguous failures stop mattering | Duplicate traffic; bookkeeping |
+| Expiry on everything | Bounded retention with nobody's cooperation | A message can expire undelivered |
+| One head (given) | Nothing to build | A single point of failure for the control plane |
+| One trust domain (given by Ray) | Nothing to build | No claim against a hostile relay in phase 1 |
+
+---
+
+## 13. Phase 2 in outline
+
+Phase 2 removes Ray, so every row in the left-hand column of section 10.3 becomes ours: discovery, failure detection, remote calls, bringing relays back, access control between nodes. That is the design described in section 4, written before the Ray requirement existed, and it is where phase 2 starts.
+
+It also removes the assumption that made phase 1 simple. With partitions, a relay that does not answer may be running on the other side, and "three copies, no majority" is no longer safe as stated. Our direction is to stay available on both sides and merge afterwards. That is safe for this system because an envelope never changes and is named by its content, so two sides can only ever hold different sets of envelopes, never different versions of one, and merging two sets is a union. Deletions are the one thing that needs care. This argument has to be worked out in full at the start of phase 2.
+
+To make the move cheap, all application logic is written in a package that does not import Ray and reaches relays only through a small set of interfaces ([ADR-0013](../decisions/0013-ray-free-core-for-phase-2.md)). Cryptography, the client, the mailbox store, the web UI and the tests carry over. The plan and schedule for both phases are in [`../design/phase-plan.md`](../design/phase-plan.md).
+
+---
+
+## 14. Technology stack
+
+[ADR-0002](../decisions/0002-python-backend-react-frontend.md) records the language decision. The component-by-component stack, with licences, is [`../design/technology-stack.md`](../design/technology-stack.md). Everything is free and open source.
+
+### 14.1 Why Python
+
+The comparison in the design study rated Go ahead on container size and startup, and Elixir as a natural fit given WhatsApp's lineage. The team chose Python and React on familiarity and speed. For phase 1 the question is closed from outside: the examiners require Ray and Python.
+
+### 14.2 Phase 1
+
+| Concern | Choice |
+|---|---|
+| Distributed runtime | Ray (`ray[default]`), one pinned 2.6x release |
+| Relay | Async Ray actor: named, detached, restarted by Ray without limit, one per node through a custom resource |
+| Discovery, liveness, supervision, calls | Ray |
+| Replication, repair, expiry | Ours |
+| Client server | FastAPI and Uvicorn in the client process |
+| Cryptography | PyNaCl and `cryptography`; X3DH and Double Ratchet either implemented by us or adopted from a library (ADR-0009, to decide in the first week) |
+| Client storage | SQLite on a Docker volume |
+| Relay storage | Memory only |
+| Cluster access | Ray token authentication |
+| Observability | Ray dashboard, state CLI, application metrics |
+| Frontend | React 18, TypeScript, Vite |
+| Tooling | `uv`, `ruff`, `mypy --strict` on the core, `pytest` |
+| Containers | One image, three roles (head, relay node, client); one Docker network; one `docker run` per container; shell scripts |
+
+A Ray node is much heavier than a bare Python process, so the memory figures in ADR-0002 (40 to 70 MB per container) do not apply to phase 1. The target of about ten Ray nodes on one laptop is the first thing we measure.
+
+### 14.3 Phase 2
+
+Ray is replaced by plain asyncio processes: TCP with our own framing between nodes, gossip for membership, a SWIM-style failure detector, signed requests. The head container disappears. Everything else in the table above stays.
+
+---
+
+## 15. Decisions still open
+
+Recorded so far: [ADR-0001](../decisions/0001-two-tier-relay-overlay-architecture.md) architecture, [0002](../decisions/0002-python-backend-react-frontend.md) stack, [0003](../decisions/0003-english-for-all-documentation.md) language of the documents, [0010](../decisions/0010-build-phase-1-on-ray.md) Ray for phase 1, [0012](../decisions/0012-head-node-policy.md) head node, [0013](../decisions/0013-ray-free-core-for-phase-2.md) Ray-free core.
+
+**Proposed, waiting for the team and the spike:** [0004](../decisions/0004-discovery-through-ray.md) discovery through Ray, [0005](../decisions/0005-three-copies-before-sent.md) three copies before `sent`, [0011](../decisions/0011-relays-as-ray-supervised-actors.md) relays as Ray-supervised actors.
+
+**Not yet written:**
+
+1. Message time-to-live, and what the sender sees when a message expires undelivered. → ADR-0006.
+2. Mailbox identifiers: one per conversation or one per direction; the invitation format; what proves a client may read or delete from a mailbox. → ADR-0007.
+3. The relay's interface and the envelope format. → ADR-0008.
+4. Implement the ratchet or adopt a library. With 20 days to the first delivery this is the largest schedule risk. → ADR-0009.
+
+**The design rests on Ray behaviour we have read about and not yet run.** The first three days of phase 1 are a spike: does a relay restart on a spare node as documented, how long does it take, what does a caller see meanwhile, and how many Ray nodes fit on the laptop. If the answers differ from the documentation, ADR-0011 is revisited before anything else is built on it.
+
+**Questions for the examiners:** whether phase 2 keeps the two-failure requirement; whether anything in phase 2 is guaranteed not to fail; whether the written deliverable must be in Spanish.
