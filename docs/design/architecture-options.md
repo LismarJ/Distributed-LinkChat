@@ -1,6 +1,11 @@
 # Architectural and Design Options — A Comparative Study
 
-**Status:** design study, pending team decision · **Date:** 2026-11-10
+**Status:** design study; decision taken in ADR-0001 · **Date:** 2026-11-10
+
+> **Update 2026-11-11: how to read this document now.** The project has two phases ([`phase-plan.md`](phase-plan.md)). The comparison of options A to E and the choice of option C stand for both.
+>
+> - **Phase 1 (Ray, due 2026-12-01)** is designed in [`ray-architecture.md`](ray-architecture.md). For phase 1, ignore what this document says about gossip discovery, SWIM, the wire protocol, the option D fallback, "mutually distrusting" relays, the write quorum of two, and the technology options in section 9.
+> - **Phase 2 (no Ray, partition-tolerant, due 2027-01-01)** starts from this document. Those same parts are its first draft. Two things in it need revising for phase 2: the replication rule must be argued for partitions, and the timeline references ("three months", "week-1 spike") are out of date.
 **Inputs:** [`../research/00-problem-analysis.md`](../research/00-problem-analysis.md) · [`../research/05-reference-platforms-comparison.md`](../research/05-reference-platforms-comparison.md) · [`../research/04-decentralized-alternatives.md`](../research/04-decentralized-alternatives.md) · [`../research/06-distributed-primitives.md`](../research/06-distributed-primitives.md)
 
 ---
