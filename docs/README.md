@@ -16,7 +16,7 @@ The examiners have split the project into two phases:
 
 No code exists yet. The phase 1 design is written and rests on Ray behaviour we have read about and not yet run; the first task is the spike listed in [`research/07-ray.md`](research/07-ray.md) section 12.
 
-**Where to start reading:** [`design/phase-plan.md`](design/phase-plan.md) for the plan, [`design/ray-architecture.md`](design/ray-architecture.md) for the phase 1 design, [`design/fault-tolerance.md`](design/fault-tolerance.md) for failures, edge cases and tradeoffs.
+**Where to start reading:** [`design/phase-1-work-plan.md`](design/phase-1-work-plan.md) for what to do next, [`design/ray-architecture.md`](design/ray-architecture.md) for the phase 1 design, [`design/fault-tolerance.md`](design/fault-tolerance.md) for failures, edge cases and tradeoffs, [`design/phase-plan.md`](design/phase-plan.md) for how the two phases relate.
 
 ## Reports
 
@@ -45,6 +45,7 @@ The notes below are the sources the reports are built from; they keep the full d
 | Doc | What it covers |
 |---|---|
 | [`design/phase-plan.md`](design/phase-plan.md) | The two phases: what each requires, what phase 2 must replace, what carries over, the schedule and scope priorities |
+| [`design/phase-1-work-plan.md`](design/phase-1-work-plan.md) | **The execution plan for phase 1.** Definition of done, the split between the two developers, six gates, every task with owner and dependencies, the person-day budget, how to use Claude Code, the cut list and the risks |
 | [`design/ray-architecture.md`](design/ray-architecture.md) | **The phase 1 design.** Five named relay actors supervised by Ray, the fixed ring, send/receive/forget, repair, the client, security claims, design patterns, code structure, the demonstration |
 | [`design/fault-tolerance.md`](design/fault-tolerance.md) | The fault model, why three copies and no majority, element-by-element and pair analysis, eighteen edge cases, what each decision gains and loses, how each claim is tested |
 | [`design/technology-stack.md`](design/technology-stack.md) | Component-by-component stack for phase 1, with licences, and what changes in phase 2 |
