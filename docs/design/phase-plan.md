@@ -67,7 +67,7 @@ There is a tension here and we should name it. Phase 1 says not to reimplement w
 
 ## 4. Phase 1 schedule
 
-Twenty days is short for this design. The order below puts the things that can sink the delivery first.
+Twenty days is short for this design. The order below puts the things that can sink the delivery first. The task-level plan, with owners, dependencies, gates and the person-day budget, is [`phase-1-work-plan.md`](phase-1-work-plan.md).
 
 | Dates | Goal | Done when |
 |---|---|---|
