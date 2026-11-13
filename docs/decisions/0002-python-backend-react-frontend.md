@@ -49,7 +49,7 @@ A Python process starts in roughly 100–300 ms including imports. The demo invo
 **Negative**
 
 - Larger images and slower iteration than Go or Rust. Accepted, mitigated above.
-- We lose `vodozemac` (the Apache-2.0 Rust Double Ratchet) as a drop-in. Python alternatives exist — `python-x3dh` (MIT) and `DoubleRatchet` from the python-omemo family — and are the fallback if our own implementation slips. Licences to be confirmed before use. See ADR-0009 (pending).
+- We lose `vodozemac` (the Apache-2.0 Rust Double Ratchet) as a drop-in, since it is Rust. The Python option is the Syndace family, `X3DH` plus `DoubleRatchet`. Resolved on 2026-11-12: we adopt a library rather than implement the protocol ([ADR-0009](0009-adopt-a-cryptography-library.md)), with licence and maintenance to be confirmed before use.
 - Type safety depends on discipline rather than the compiler. Mitigation: `mypy --strict` on the protocol and state-machine modules, where a type error becomes a correctness bug, and `ruff` in CI.
 
 ## Re-examination — 2026-11-11
@@ -70,5 +70,5 @@ The language decision was revisited from scratch on request, not because new inf
 
 ## Follow-ups
 
-- ADR-0009 — implement X3DH + Double Ratchet ourselves over PyNaCl, or adopt `python-x3dh` + `DoubleRatchet`. Decide after the week-1 spike; confirm licences either way.
+- [ADR-0009](0009-adopt-a-cryptography-library.md) is decided: adopt a library. Confirm its licence and maintenance before any code depends on it.
 - Confirm `PyNaCl` is Apache-2.0 and `cryptography` is Apache-2.0/BSD against their project pages before the report cites them.

@@ -1,8 +1,9 @@
 # Phase 1 work plan
 
-**Status:** working plan, to be adjusted after the spike · **Date:** 2026-11-11
+**Status:** working plan, to be adjusted after the spike · **Written:** 2026-11-11 · **Revised:** 2026-11-12
 **For:** the two developers on the team, working with Claude Code
-**Delivery:** 2026-12-01 (20 calendar days from today)
+**Delivery:** 2026-12-01 (19 calendar days from today)
+**Revision of 2026-11-12:** the team settled the cryptography ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md): adopt a library) and the scope ([ADR-0014](../decisions/0014-phase-1-scope-cuts.md): optional features deferred, no direct client-to-client path). Sections 4, 6, 8 and 9 are updated accordingly.
 **Design this executes:** [`ray-architecture.md`](../design/ray-architecture.md) · [`fault-tolerance.md`](../design/fault-tolerance.md) · [`phase-plan.md`](phase-plan.md) (the two phases) · [`../research/07-ray.md`](../research/07-ray.md) (Ray, and the spike list)
 
 ---
@@ -11,7 +12,8 @@
 
 The delivery is done when all of this is true, and not before:
 
-1. A running system: one head container, five or more relay node containers, two or more client containers, all started one by one with `docker run`, in any order, with no Compose.
+1. A running system: one head container, five or more relay node containers, two or more client containers, all started one by one with `docker run`, in any order, with
+ no Compose.
 2. Two users exchange encrypted one-to-one messages through a browser UI, with the recipient's container stopped at the time of sending.
 3. **Any two elements can be killed simultaneously** without the system being affected. Demonstrated for: two relay containers, two relay processes, one of each, and a client killed mid-send.
 4. No duplicates and no wrong order in either client's history after any of those scenarios.
@@ -40,20 +42,24 @@ Both own the interfaces, the fuzz tests and the written deliverable. Neither sho
 
 ## 4. Budget check
 
-14 weekday days remain (Nov 11, 12, 13, 16 to 20, 23 to 27, 30), plus 6 weekend days (Nov 14, 15, 21, 22, 28, 29).
+**Revised 2026-11-12,** after the team settled the cryptography and the scope ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md), [ADR-0014](../decisions/0014-phase-1-scope-cuts.md)).
+
+13 weekday days remain (Nov 12, 13, 16 to 20, 23 to 27, 30), plus 6 weekend days (Nov 14, 15, 21, 22, 28, 29).
 
 | | Person-days available |
 |---|---|
-| Weekdays only, two people | 28 |
-| Every day, two people | 40 |
+| Weekdays only, two people | 26 |
+| Every day, two people | 38 |
 
-The task list in section 6 adds up to **33 person-days** with an adopted ratchet library, or about **37** if we implement X3DH and the Double Ratchet ourselves. Three conclusions follow, and they are the reason this section exists:
+The task list in section 6 now adds up to about **32 person-days**: the original 33.5, minus the deferred digest comparison (1) and the reduced overlay view (0.75), with the cryptography fixed at 3 rather than 6 because the library decision is taken.
 
-1. **Weekdays alone are not enough.** Some weekend work is needed, or the "could" items in section 8 go.
-2. **Writing the ratchet ourselves leaves no slack at all.** 37 of 40 person-days, with no allowance for the spike invalidating something. The recommendation is to adopt a library for phase 1 and record what that costs us (ADR-0009, decided by Nov 13).
-3. **Protect two days at the end.** Rehearsal and the written deliverable are in the budget, not squeezed out of it.
+Three things follow:
 
-These are estimates by two people who have not built this before. Expect them to be wrong individually and treat the total as the thing to watch.
+1. **The two decisions bought less than they appear to.** Deferring the optional features returned under 2 person-days. The one that mattered was the cryptography: writing it ourselves would have put the total near 35 against 38, leaving nothing for the spike invalidating something. That risk is now retired.
+2. **Weekdays alone are still not enough.** 32 against 26 leaves a gap of 6 person-days, which is three weekend days with both people working, out of the six available. The pressure in this project comes from the core mechanisms, not the extras, and there is nothing optional left whose removal would change that.
+3. **Protect the last two days.** Rehearsal and the written deliverable are in the budget, not squeezed out of it.
+
+These are estimates by two people who have not built this before. Expect them to be wrong individually and treat the total as the thing to watch. If the spike costs more than the two days allowed for it, the gap comes out of the weekend rather than out of section 1.
 
 ## 5. Milestones and gates
 
@@ -61,7 +67,7 @@ A gate is a question with a yes or no answer. If the answer is no, the plan chan
 
 | Gate | Date | Question |
 |---|---|---|
-| **G0** | Nov 11, end of day | Are `core/ports.py` and the envelope format frozen, and does the repository build and test on both machines? |
+| **G0** | Nov 12, end of day | Are `core/ports.py` and the envelope format frozen, and does the repository build and test on both machines? Until this is done nothing else can run in parallel, so it is today's only priority |
 | **G1** | Nov 14 | Does Ray behave as the design assumes? Specifically: does a relay actor restart on a spare node when its container is killed, how long does it take, what exception does a caller see first, and do about ten Ray nodes fit on the laptop? |
 | **G2** | Nov 18 | Does one client send a message through real relays on a real Ray cluster to a client whose container is stopped, and does that client get it on return? |
 | **G3** | Nov 23 | Do the two-failure scenarios pass: two relay containers, two relay processes, one of each, and a client killed mid-send? |
@@ -98,7 +104,7 @@ Half-day granularity. "Done when" is the check, not an opinion. Dependencies are
 | R7 | Hinted handoff: the background loop that returns covered records to their primary and drops its own copy on confirmation | 1 | R5, R6 | After a relay returns, the stand-in's copy is gone and the primary has the record |
 | R8 | TTL sweeper, supervised background loops (restart on exception, counters, last-success time), `status` | 1 | R2, R3 | Killing a loop's coroutine is visible in `status` and the loop comes back. Expiry removes records with no acknowledgement |
 | R9 | `ray.util.metrics` counters and gauges per relay; tune the concurrency groups | 0.5 | R3, R8 | Stored, expired, repaired and parked-waiter counts are visible, and parked waiters do not block `store` |
-| R10 | Periodic digest comparison between primaries | 1 | R6 | Two relays with deliberately divergent contents converge in one round. **Cuttable** (section 8) |
+| R10 | Periodic digest comparison between primaries | **deferred** | | Not built in phase 1 ([ADR-0014](../decisions/0014-phase-1-scope-cuts.md)). The reasoning, and what it costs us, are recorded there |
 | R11 | Fault-injection scripts and the container-level test runs: kill two nodes in one command, kill two processes, one of each | 1 | R5 to R8 | Each scenario is one command, repeatable, with a pass or fail printed at the end |
 
 ### Client track, Dev B
@@ -110,11 +116,11 @@ Half-day granularity. "Done when" is the check, not an opinion. Dependencies are
 | C3 | SQLite schema and the history store: identity, sessions, messages, outbox, seen-set, with a unique index on the envelope ID; WAL mode | 1 | S1 | A client killed at any point reopens with no lost or duplicated row |
 | C4 | Outbox with retry and backoff: written before the first attempt, cleared on confirmation | 1 | C3 | A client killed mid-send finishes the send after restart, and the recipient sees one copy |
 | C5 | Send and receive loops: three-copy send through the gateway, fetch-merge-decrypt-commit-acknowledge, one parked `wait_for_mail` | 1 | C1 to C4, R4 | Against the fake transport, a full exchange works with relays failing underneath |
-| C6 | **Cryptography:** identity keys, X3DH against a prekey bundle on relays, the ratchet, session state in SQLite | 3 adopted / 6 ours | C3, ADR-0009 | Official test vectors pass. Two clients with no prior contact establish a session while one is offline |
+| C6 | **Cryptography:** integrate the adopted library ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md)); identity keys, prekey bundles published through relays, session and ratchet state in SQLite. Confirm the library's licence and maintenance **before** any code depends on it | 3 | C3 | The library's own test vectors pass. Two clients with no prior contact establish a session while one of them is offline, and both survive being killed and restarted mid-conversation |
 | C7 | Ordering: two-element vector clock per conversation, predecessor reference, hold-and-release buffer, gap marker on timeout, tie-break on concurrent messages | 1.5 | C3, C5 | Both clients show the same order for concurrent messages. A missing predecessor releases after the timeout with a marker |
 | C8 | FastAPI and the WebSocket to the browser, served from the client process with one worker | 1 | C5 | The UI updates without polling, and no process is forked after Ray starts |
 | C9 | React UI: conversations, composer, per-message delivery state (`pending`, `sent`, `delivered`, `read`, `not delivered`), contact invitation | 2 | C8 | A grader can watch a tick change from `pending` to `sent` as relays are killed |
-| C10 | Overlay view: the five relays, each one's status as this client sees it, and which three hold the current mailbox | 1 | C9, R9 | Killing a relay container changes the view within the failover timeout. **Cuttable** |
+| C10 | Overlay view, reduced: the five relays with the status this client already learns from its own calls, and which three hold the current mailbox. Ray's dashboard covers nodes and actor placement | 0.25 | C9 | Killing a relay container changes the view within the failover timeout |
 
 ### Shared, Nov 24 to 30
 
@@ -148,17 +154,17 @@ On cost, since this ran high during the research:
 - Do not ask it to spawn subagents unless you want many of them; one session reading one file is far cheaper than five agents reading the web.
 - Prefer small edits to whole-file rewrites.
 
-## 8. Scope, in the order it gets cut
+## 8. Scope
 
-If the plan slips, cut from the bottom. Decide at G3 (Nov 23), not in the last week.
+Settled on 2026-11-12 by [ADR-0014](../decisions/0014-phase-1-scope-cuts.md). The optional work is out of phase 1 rather than attempted and abandoned half-built.
 
-**Must have.** The vertical slice; three copies before `sent`; stand-ins; sync on restart; TTL and tombstones; duplicate suppression; ordering; local history; authenticated encryption between clients; the two-failure demonstration; the written reasoning.
+**In scope, and not negotiable.** The vertical slice; three copies before `sent`; stand-ins; sync on restart; hinted handoff (R7); TTL and tombstones; duplicate suppression; ordering; local history; authenticated encryption between clients; the parked `wait_for_mail`; metrics (R9); the reduced overlay view (C10); the two-failure demonstration; the written reasoning.
 
-**Should have.** Hinted handoff back to primaries (R7); the parked `wait_for_mail` (without it, the client polls, which is slower and still correct); metrics (R9); the overlay view (C10).
+**Out of phase 1.** Periodic digest comparison (R10); several padding size classes; streaming delivery; read receipts; any direct client-to-client path. Each one's reason, and what it costs us, is in ADR-0014.
 
-**Could have, cut first.** Periodic digest comparison (R10); several padding size classes; streaming delivery; read receipts.
+Two of those deserve a word here because they look like they touch correctness and do not. Dropping the digest comparison means an acknowledged envelope can sit on one relay until it expires, where the client's seen-set absorbs it: deletion is less prompt, nothing is lost or duplicated, and expiry remains the guarantee R9 rests on. Dropping the direct client-to-client path means every message goes through relays without exception, which is a property worth claiming rather than an omission to apologise for.
 
-Cutting R7 costs honesty rather than correctness: records stay on stand-ins until their TTL, which works but is worth stating. Cutting R10 means an acknowledged envelope can sit on one relay until it expires, which the client's seen-set absorbs.
+**If the plan still slips** after this, the next things to go are the reduced overlay view (0.25) and `wait_for_mail`, in that order. Without `wait_for_mail` the client polls, which is slower and still correct, but it also removes one of the clearest natural uses of a Ray async actor, so it goes last. Decide at G3 (Nov 23), not in the final week.
 
 ## 9. Risks
 
@@ -166,7 +172,8 @@ Cutting R7 costs honesty rather than correctness: records stay on stand-ins unti
 |---|---|---|
 | Ray does not restart relays as documented | G1 on Nov 14 | Fall back to the pinned-relay design and tell the examiners why. Costs about three days |
 | About ten Ray nodes do not fit on the laptop | G1 | Fewer relay nodes, no spares, and say what that costs in the analysis. Decide the topology that night |
-| The ratchet eats the schedule | Nov 13, the ADR-0009 decision | Adopt a library. Failing that, ship X3DH with a simple symmetric ratchet and complete the Double Ratchet in phase 2, documented as a known gap |
+| ~~The ratchet eats the schedule~~ | Retired 2026-11-12 | A library is adopted ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md)). What remains is smaller: the library may fail licence or maintenance verification, in which case we ship X3DH from a library with a single symmetric ratchet of our own and declare the reduced forward secrecy |
+| We cannot explain cryptography we did not write | The first rehearsal | Whoever integrates the library reads the X3DH and Double Ratchet specifications while doing it, not the week before the defense |
 | The two tracks drift apart | The first integration at G2 | S1 on day one, and integrate on the real cluster at G2 and then every two days, never only at the end |
 | A two-failure test fails for a reason we do not understand | G3 | This is the one to stop for. An unexplained failure in the mechanism we are graded on is worse than a missing feature. Use the fake transport to reproduce it deterministically before changing anything |
 | Everything works and nobody can explain it | Rehearsals at G5 | Each person presents the other's track once during rehearsal. Whatever cannot be explained gets explained or removed |

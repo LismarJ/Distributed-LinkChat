@@ -61,7 +61,7 @@ Sections 1 to 4 describe phase 1 (due 2026-12-01). Section 5 lists what changes 
 | Client HTTP/WS server | **FastAPI** + **Uvicorn**, one worker, in the driver process | MIT / BSD | No forking after Ray starts (a documented Ray anti-pattern) |
 | Crypto primitives | **PyNaCl** (libsodium: X25519, Ed25519, XChaCha20-Poly1305, BLAKE2b) | Apache-2.0 *(confirm)* | |
 | KDF and extras | **`cryptography`** (HKDF, AEAD) | Apache-2.0 / BSD *(confirm)* | |
-| X3DH and Double Ratchet | Undecided: our implementation over the above, or `python-x3dh` + `DoubleRatchet` | ours / MIT *(confirm)* | ADR-0009, to decide in the first week; see [`phase-plan.md`](../planning/phase-plan.md) section 4 |
+| X3DH and Double Ratchet | **An adopted library**, not our implementation. First choice `X3DH` + `DoubleRatchet` (Syndace) | *(licence and maintenance to confirm before use)* | [ADR-0009](../decisions/0009-adopt-a-cryptography-library.md). `X3DH` needs the native libraries `libxeddsa` and `libsodium` in the image. Do not use unvetted PyPI ratchet packages |
 | Client persistence | **SQLite** (`aiosqlite`), WAL mode, on a Docker volume | MIT / PSF | Identity, sessions, outbox, seen-set, history |
 | Relay persistence | Actor memory: dict plus `heapq` TTL index | stdlib | No disk and no checkpoint. Durability comes from three copies |
 | Packaging | **`uv`** with a committed `uv.lock` | MIT / Apache-2.0 | |
@@ -112,7 +112,7 @@ The earlier estimates for bare Python containers (40 to 70 MB of memory each) ap
 ## 6. Open items
 
 1. The spike list in [`../research/07-ray.md`](../research/07-ray.md) section 12.
-2. ADR-0009: implement the ratchet or adopt a library.
+2. Which cryptography library, confirmed for licence and maintenance ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md)).
 3. Confirm the licences of PyNaCl, `cryptography` and any ratchet package before the written report cites them.
 
 ## Sources

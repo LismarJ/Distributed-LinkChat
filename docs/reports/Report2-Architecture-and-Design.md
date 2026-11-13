@@ -104,7 +104,7 @@ The design rests on eleven mechanisms, each one borrowed or adapted from a speci
 8. **Crypto.** X3DH plus the Double Ratchet over libsodium primitives. Prekey bundles are self-verifying signed records stored on the overlay, so an untrusted relay can't forge one.
 9. **Ordering and dedup.** A two-element vector clock per conversation, plus `prev_message_id` hash references, plus a content-hash `message_id`, plus a persisted seen-set with a unique index.
 10. **Churn.** Push-on-join record sync, hand-off on departure, periodic Merkle-digest anti-entropy between relays in a placement set, and storage-audit challenges (`H(record ‖ nonce)`) that close a gap Session itself admits it never solved.
-11. **Fast path (optional).** Direct client-to-client transfer when both happen to be online, falling back to the overlay otherwise. A nice demo, and strictly optional.
+11. **Fast path (optional).** Direct client-to-client transfer when both happen to be online, falling back to the overlay otherwise. Not built: it was removed from phase 1 scope on 2026-11-12, with the reasoning in section 15 and in [ADR-0014](../decisions/0014-phase-1-scope-cuts.md).
 
 What makes this the recommended option is that it's the only one that satisfies all nine requirements (R2, one-to-one conversations, isn't in the comparison table in section 7 because every option here satisfies it by construction; it's a scoping choice, not something that discriminates between architectures), including R9 structurally rather than as a stated policy. It also carries by far the densest distributed-systems content of the five: gossip membership, failure detection, consistent hashing, replication with a write quorum, anti-entropy, churn rebalancing, causal ordering, idempotence, TTL garbage collection. It also demos well under the no-Compose rule specifically: start relays in any order, kill the one holding a message and it still arrives, kill every relay and restart them empty and both clients still show their full history. And it lets us make a specific, checkable claim about what we did differently from the two closest prior systems: Session gave up forward secrecy because its swarms offer no durable prekey storage, we keep the ratchet by making prekey bundles self-verifying instead; SimpleX has no replication at all, we add it.
 
@@ -334,7 +334,7 @@ The comparison in the design study rated Go ahead on container size and startup,
 | Discovery, liveness, supervision, calls | Ray |
 | Replication, repair, expiry | Ours |
 | Client server | FastAPI and Uvicorn in the client process |
-| Cryptography | PyNaCl and `cryptography`; X3DH and Double Ratchet either implemented by us or adopted from a library (ADR-0009, to decide in the first week) |
+| Cryptography | PyNaCl and `cryptography` for the primitives; X3DH and the Double Ratchet from an adopted library, not written by us ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md)) |
 | Client storage | SQLite on a Docker volume |
 | Relay storage | Memory only |
 | Cluster access | Ray token authentication |
@@ -353,7 +353,7 @@ Ray is replaced by plain asyncio processes: TCP with our own framing between nod
 
 ## 15. Decisions still open
 
-Recorded so far: [ADR-0001](../decisions/0001-two-tier-relay-overlay-architecture.md) architecture, [0002](../decisions/0002-python-backend-react-frontend.md) stack, [0003](../decisions/0003-english-for-all-documentation.md) language of the documents, [0010](../decisions/0010-build-phase-1-on-ray.md) Ray for phase 1, [0012](../decisions/0012-head-node-policy.md) head node, [0013](../decisions/0013-ray-free-core-for-phase-2.md) Ray-free core.
+Recorded so far: [ADR-0001](../decisions/0001-two-tier-relay-overlay-architecture.md) architecture, [0002](../decisions/0002-python-backend-react-frontend.md) stack, [0003](../decisions/0003-english-for-all-documentation.md) language of the documents, [0009](../decisions/0009-adopt-a-cryptography-library.md) adopt a cryptography library, [0010](../decisions/0010-build-phase-1-on-ray.md) Ray for phase 1, [0012](../decisions/0012-head-node-policy.md) head node, [0013](../decisions/0013-ray-free-core-for-phase-2.md) Ray-free core, [0014](../decisions/0014-phase-1-scope-cuts.md) phase 1 scope.
 
 **Proposed, waiting for the team and the spike:** [0004](../decisions/0004-discovery-through-ray.md) discovery through Ray, [0005](../decisions/0005-three-copies-before-sent.md) three copies before `sent`, [0011](../decisions/0011-relays-as-ray-supervised-actors.md) relays as Ray-supervised actors.
 
@@ -362,7 +362,8 @@ Recorded so far: [ADR-0001](../decisions/0001-two-tier-relay-overlay-architectur
 1. Message time-to-live, and what the sender sees when a message expires undelivered. → ADR-0006.
 2. Mailbox identifiers: one per conversation or one per direction; the invitation format; what proves a client may read or delete from a mailbox. → ADR-0007.
 3. The relay's interface and the envelope format. → ADR-0008.
-4. Implement the ratchet or adopt a library. With 20 days to the first delivery this is the largest schedule risk. → ADR-0009.
+
+**What the team settled on 2026-11-12.** The cryptography is adopted rather than written, because a ratchet built from a specification in three weeks is the one part of this project where plausible and correct look identical from the outside, and because the graded content is the distributed-systems design. The optional features are out of phase 1 rather than half-built: periodic digest comparison between relays, several padding size classes, streaming delivery, read receipts, and any direct path between two clients who are both online. That last one is worth naming at the defense with its reason, since in phase 1 a client is a Ray driver that nothing can call into, so a direct path would need either a per-client actor that Ray restarts empty or sockets of our own that phase 1 forbids, and presence is a guess that is wrong exactly when it matters. The consequence is a property rather than a gap: every message in phase 1 goes through the relay tier, without exception.
 
 **The design rests on Ray behaviour we have read about and not yet run.** The first three days of phase 1 are a spike: does a relay restart on a spare node as documented, how long does it take, what does a caller see meanwhile, and how many Ray nodes fit on the laptop. If the answers differ from the documentation, ADR-0011 is revisited before anything else is built on it.
 

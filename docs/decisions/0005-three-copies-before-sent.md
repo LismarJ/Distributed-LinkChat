@@ -43,4 +43,4 @@ Option 1.
 ## Still open
 
 - The client's per-call timeout, from the spike.
-- Whether periodic digest comparison between primaries is built in phase 1 or left out ([`../design/ray-architecture.md`](../design/ray-architecture.md) section 6).
+- Resolved on 2026-11-12: periodic digest comparison is deferred from phase 1 ([ADR-0014](0014-phase-1-scope-cuts.md)). It costs promptness of deletion, not the two-failure guarantee.
