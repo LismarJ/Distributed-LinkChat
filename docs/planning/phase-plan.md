@@ -67,8 +67,6 @@ There is a tension here and we should name it. Phase 1 says not to reimplement w
 
 ## 4. Phase 1 schedule
 
-Twenty days is short for this design. The order below puts the things that can sink the delivery first. The task-level plan, with owners, dependencies, gates and the person-day budget, is [`phase-1-work-plan.md`](phase-1-work-plan.md).
-
 | Dates | Goal | Done when |
 |---|---|---|
 | Nov 12 to 14 | **Spike** (research note 07, section 12, items 1 to 9). In parallel: repository skeleton, images, `up-*.sh` scripts, CI | We know restart times, the exceptions callers see, memory per node, and how many nodes the laptop holds |
@@ -79,11 +77,14 @@ Twenty days is short for this design. The order below puts the things that can s
 
 **Scope, in priority order**
 
-1. *Must:* everything in the vertical slice; three copies before `sent`; stand-ins; sync on restart; TTL; duplicate suppression; ordering; local history; authenticated encryption between clients; the two-failure demonstration.
-2. *Should:* hinted handoff back to primaries; tombstone propagation; `wait_for_mail`; metrics; the overlay view.
-3. *Could:* periodic digest comparison; streaming delivery; padding to several size classes.
+Settled on 2026-11-12 by [ADR-0014](../decisions/0014-phase-1-scope-cuts.md). The task-level version is [`phase-1-work-plan.md`](phase-1-work-plan.md) section 8.
 
-**The largest schedule risk is the ratchet.** Implementing X3DH and the Double Ratchet from the specifications, with tests, is realistic over several weeks and tight inside this one. The pending decision (ADR-0009) should be taken in the first week. Our recommendation is to adopt an existing Python implementation for phase 1 if the spike shows one that works and has an acceptable licence, and otherwise to ship X3DH with a simple symmetric ratchet in phase 1 and complete the Double Ratchet in phase 2. Either way the choice and what it costs in security properties gets written down.
+1. *In scope:* everything in the vertical slice; three copies before `sent`; stand-ins; sync on restart; hinted handoff; TTL and tombstones; duplicate suppression; ordering; local history; authenticated encryption between clients; `wait_for_mail`; metrics; a reduced overlay view; the two-failure demonstration.
+2. *Out of phase 1:* periodic digest comparison; streaming delivery; padding to several size classes; read receipts; any direct client-to-client path.
+
+**The ratchet is no longer the largest schedule risk.** Implementing X3DH and the Double Ratchet from the specifications would have been realistic over several weeks and unrealistic inside this one, so the team decided to adopt a maintained library ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md)). What remains is to confirm that library's licence and maintenance before anything depends on it, and to be able to explain the protocol at the defense despite not having written it. The same decision holds for phase 2.
+
+**The deferred items are candidates for phase 2**, where anti-entropy stops being optional because partitions make divergence normal rather than exceptional.
 
 ## 5. Phase 2 outline
 

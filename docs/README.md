@@ -67,12 +67,15 @@ ADRs live in [`decisions/`](decisions/), numbered, in the form *context → opti
 | [0003](decisions/0003-english-for-all-documentation.md) | English for all documentation | Accepted |
 | [0004](decisions/0004-discovery-through-ray.md) | Phase 1: discovery and liveness come from Ray; clients keep no membership view | Proposed |
 | [0005](decisions/0005-three-copies-before-sent.md) | Phase 1: three copies on three relays before a message counts as sent; five relays | Proposed |
+| [0009](decisions/0009-adopt-a-cryptography-library.md) | Adopt an existing library for X3DH and the Double Ratchet; do not write them ourselves | Accepted |
 | [0010](decisions/0010-build-phase-1-on-ray.md) | Phase 1 is built on Ray, using what Ray offers | Accepted (examiners) |
 | [0011](decisions/0011-relays-as-ray-supervised-actors.md) | Phase 1: relays are a fixed set of named actors supervised by Ray; clients are Ray drivers | Proposed |
 | [0012](decisions/0012-head-node-policy.md) | Phase 1: one head node, not made fault tolerant | Accepted (examiners' scope) |
 | [0013](decisions/0013-ray-free-core-for-phase-2.md) | Application logic lives in a core that does not import Ray | Accepted |
 
-Pending: 0006 TTL and expiry behaviour · 0007 mailbox identifiers and access credential · 0008 relay interface and envelope format · 0009 implement the ratchet or adopt a library (urgent, see the phase plan).
+| [0014](decisions/0014-phase-1-scope-cuts.md) | Phase 1 scope: optional features deferred, and no direct client-to-client path | Accepted |
+
+Pending: 0006 TTL and expiry behaviour · 0007 mailbox identifiers and access credential · 0008 relay interface and envelope format.
 
 ## Specs
 

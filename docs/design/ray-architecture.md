@@ -169,7 +169,7 @@ Three mechanisms, in order of importance.
 
 **Hinted handoff (essential).** A stand-in that holds a record for an unreachable primary keeps the hint. A background loop tries to deliver hinted records to their primary (`handoff`). When the primary confirms, the stand-in deletes its copy. Until then the stand-in serves the record to anyone who asks.
 
-**Periodic comparison (useful, first to cut).** Primaries of a range exchange a digest of envelope IDs and tombstones now and then and send what the other lacks. Its job is to spread tombstones that missed a relay and to catch anything the first two mechanisms did not. If it is cut, the cost is that an acknowledged envelope may sit on one relay until its TTL and be offered again, where the client's seen-set discards it.
+**Periodic comparison (deferred from phase 1, [ADR-0014](../decisions/0014-phase-1-scope-cuts.md)).** Primaries of a range would exchange a digest of envelope IDs and tombstones now and then and send what the other lacks, spreading tombstones that missed a relay and catching anything the first two mechanisms did not. It is not built in phase 1. The consequence is that an acknowledged envelope can sit on one relay until its TTL and be offered again, where the client's seen-set discards it. Nothing is lost and nothing is delivered twice; deletion is simply less prompt, and expiry becomes the only backstop for divergence we did not foresee.
 
 The argument that these are enough, and the cases where they are not, are in [`fault-tolerance.md`](fault-tolerance.md).
 
@@ -265,6 +265,7 @@ linkchat/
 | A single mailbox service, or Ray Serve in front of relays | A central store or a central entry point |
 | Envelopes in the object store (`ray.put`) | An object dies with its owner, which is the sender |
 | Clients outside the cluster through Ray Client | Discouraged for long-running programs |
+| A direct client-to-client path when both users are online | A client is a Ray driver and nothing can call into a driver. It would need either a per-client inbox actor, which Ray restarts empty and which needs the relay path as a fallback anyway, or our own sockets, which phase 1 forbids. Presence is a guess that is wrong exactly when it matters. [ADR-0014](../decisions/0014-phase-1-scope-cuts.md) |
 
 ## 13. The demonstration
 
@@ -287,5 +288,5 @@ Step 9 is more than two failures, and it is there to show R9 and R7, not fault t
 - ADR-0006: TTL, and what the sender sees when a message expires undelivered.
 - ADR-0007: mailbox identifiers, the invitation format, and the credential for `fetch` and `ack`.
 - ADR-0008: the relay actor interface and the envelope format.
-- ADR-0009: write the ratchet ourselves or adopt a library. With delivery on 2026-12-01 this needs deciding in the first week ([`phase-plan.md`](../planning/phase-plan.md)).
+- Resolved: adopt a cryptography library ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md)); the library itself still has to be verified before code depends on it. Scope cuts are [ADR-0014](../decisions/0014-phase-1-scope-cuts.md).
 - Ray version to pin, and base image.

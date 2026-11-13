@@ -11,7 +11,7 @@ The mechanisms we will actually assemble, with the evidence for choosing between
 > | 1. Key placement | Applies, simplified: the ring is a fixed set of five relay names, since Ray keeps the relays alive | Applies as written: placement over the live membership |
 > | 2. Membership, discovery, failure detection | **Not built.** Ray provides all three, and the examiners forbid reimplementing them | Applies as written |
 > | 3. Ordering | Applies | Applies |
-> | 4. Replication, quorum, anti-entropy | Changed. Two simultaneous failures require three confirmed copies, not two of three. Without partitions no majority is needed. Repair is sync on restart plus hinted handoff; digest comparison is optional. See section 9 below | To be redesigned for partitions; anti-entropy becomes essential |
+> | 4. Replication, quorum, anti-entropy | Changed. Two simultaneous failures require three confirmed copies, not two of three. Without partitions no majority is needed. Repair is sync on restart plus hinted handoff; digest comparison is deferred from phase 1 (ADR-0014). See section 9 below | To be redesigned for partitions; anti-entropy becomes essential |
 > | 5 to 7. Duplicates, local persistence, retry | Apply. Ray's call retries are added underneath ours | Apply |
 > | 8. What we are not building | Still not built | Still not built |
 >

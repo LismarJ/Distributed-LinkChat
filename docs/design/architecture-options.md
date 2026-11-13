@@ -131,7 +131,7 @@ The synthesis of Session (replicated swarms), SimpleX (opaque queues, padded cip
 8. **Crypto.** X3DH + Double Ratchet over libsodium primitives. Prekey bundles are **self-verifying signed records** stored on the overlay, so an untrusted relay cannot forge one.
 9. **Ordering and dedup.** 2-element vector clock per conversation + `prev_message_id` hash references; `message_id` = content hash; persisted seen-set with a unique index.
 10. **Churn.** Push-on-join record sync; hand-off on departure; periodic Merkle-digest anti-entropy between swarm members; storage audit challenges (`H(record ‖ nonce)`) — closing a gap Session itself admits.
-11. **Fast path (optional).** Direct client-to-client transfer when both are online, falling back to the overlay. Nice demo, strictly optional.
+11. **Fast path (optional, and not built in phase 1).** Direct client-to-client transfer when both are online, falling back to the overlay. Removed from phase 1 scope on 2026-11-12 ([ADR-0014](../decisions/0014-phase-1-scope-cuts.md)), which also explains why it stays out of phase 2 unless a reason appears.
 
 **Advantages**
 - **Satisfies all nine requirements**, including R9 structurally rather than by policy.
@@ -297,7 +297,7 @@ Free and open source throughout, as required. These are the choices still genuin
 **Still open**
 
 4. **How many containers will run on one laptop at the defense?** Bounds R, swarm sizes, and the test topology. Memory budget from ADR-0002: roughly 40–70 MB per Python container.
-5. **Appetite for risk:** implement X3DH + Double Ratchet ourselves (more defensible at the defense, more time) or adopt `python-x3dh` + `DoubleRatchet` (protects the schedule)? → ADR-0009, after the week-1 spike.
-6. **Is the direct client-to-client fast path worth the extra code,** or do all messages go through the overlay for uniformity?
+5. **Appetite for risk:** implement X3DH + Double Ratchet ourselves, or adopt a library? Resolved for both phases on 2026-11-12: adopt ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md)).
+6. ~~**Is the direct client-to-client fast path worth the extra code?**~~ Resolved on 2026-11-12: no. All messages go through the overlay, for uniformity and for the reasons in [ADR-0014](../decisions/0014-phase-1-scope-cuts.md).
 7. **Is the Option D gossip fallback (§5) in scope for v1?** Small code, dramatic partition demo.
 8. **Does the course require a written report in Spanish?** Cheap to confirm now, expensive to discover in month three ([ADR-0003](../decisions/0003-english-for-all-documentation.md)).
