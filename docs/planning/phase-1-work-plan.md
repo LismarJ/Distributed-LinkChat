@@ -74,6 +74,66 @@ A gate is a question with a yes or no answer. If the answer is no, the plan chan
 | **G4** | Nov 26 | Does the whole demonstration script run end to end, with encryption, ordering and the UI? |
 | **G5** | Nov 30 | Three clean rehearsals in a row, and the written deliverable finished? |
 
+### Progress log
+
+**2026-11-12.** The repository exists. What is written, and how far it is
+actually verified, which are two different things:
+
+| Task | Written | Verified |
+|---|---|---|
+| S1 interfaces and envelope format | `linkchat/core/`: `ports.py`, `envelope.py`, `payload.py`, `types.py`, `constants.py`, `clock.py` | Yes, by hand against the system Python: 50 checks on padding, identifiers, the quorum constants and the port surface. The Ray-free guard was tested against eight ways of evading it |
+| S2 skeleton and tooling | `pyproject.toml`, `tests/`, `.github/workflows/ci.yml`, `scripts/check.sh`, ignore files | Partly. The guard's logic is verified, but `ruff`, `mypy` and `pytest` have never run, because this machine has no `uv` and no virtual environment |
+| S3 image and cluster scripts | `Dockerfile`, `docker/entrypoint.sh`, `scripts/*.sh` | Shell and Python syntax only. **Nothing has been run against Docker or Ray**, because neither is installed on the machine this was written on |
+| S4 spike | `spike/` and `scripts/spike.sh`, with the procedure in `spike/README.md` | Not run. That is the task itself |
+| R1 placement | `linkchat/core/ring.py`, `tests/test_ring.py` | Yes. Balance measured, placement pinned by a fingerprint test |
+| R2 mailbox store | `linkchat/core/mailbox.py`, `tests/test_mailbox.py` | Yes. 222 assertions pass on idempotence, tombstones, expiry, quotas and resync |
+
+**Roles, from 2026-11-12.** Dev A takes the relay track. `S2` and `payload.py`
+(task C1) were written before that split and belong to the client track: Dev B
+should review them rather than inherit them unseen.
+
+**R1 was rebuilt once, and the reason is worth keeping.** It was first written
+as consistent hashing with 64 virtual nodes per relay. Measured, that gave each
+relay first-primary duty for between 15.8% and 24.8% of mailboxes against an
+ideal 20%, because five relays carve a ring into arcs of accidental sizes and
+virtual nodes only shrink that as the square root of their count. Rendezvous
+hashing gave 19.6% to 20.3% with no parameter to tune, in less code, and keeps
+the property phase 2 needs: when a relay leaves, only the mailboxes it actually
+won have to move. The measurement is in `ring.py` and the test keeps taking it.
+
+**Two decisions inside R2 that the fault-tolerance argument depends on:**
+
+- **Acknowledging an envelope this relay never held still writes a tombstone.**
+  Otherwise a relay that missed the original write, and then received the
+  acknowledgement, would later accept the record from a stand-in handing it
+  back and serve a message the reader had already seen. Since digest
+  comparison is deferred (ADR-0014), the tombstone is the only thing standing
+  in the way.
+- **A tombstone is checked before expiry**, so a record that is both is refused
+  as tombstoned. "A late copy was suppressed" is an event worth counting;
+  "something arrived past its time" is junk.
+
+**R3 onwards are blocked on the spike**, which is the next relay-track task.
+
+**G0 is therefore half answered.** The interfaces and the envelope format are
+frozen, which is the half that unblocks both tracks. The other half, that the
+repository builds and tests on both machines, is the first thing to do:
+
+```bash
+uv venv --python 3.12      # not 3.14: Ray cannot install on it
+uv sync --extra dev
+scripts/check.sh
+```
+
+Two things found while writing it, worth keeping:
+
+- **The system Python on these machines is 3.14, and Ray supports up to 3.13.**
+  The virtual environment and the image both have to be 3.12. This would have
+  been a confusing afternoon if it had surfaced during the spike instead.
+- `payload.py` needs `msgpack`, so its tests cannot run until the environment
+  exists. The envelope, the ports and the constants are deliberately stdlib
+  only, so that the file both tracks depend on could be checked today.
+
 ### G1 is the one that can change the plan
 
 If the spike shows that Ray does not restart a relay onto a spare node the way the documentation reads, the fallback is the design we wrote first: relays pinned to their container, `max_restarts=0`, and placement recomputed over the live relays. That is more of our own code, and it needs the examiners to agree that letting Ray restart actors is not available to us rather than that we declined to use it. Decide this on Nov 14, not later.
