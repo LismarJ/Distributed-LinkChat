@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .constants import WRITE_COPIES
-from .ports import Clock, RelayDirectory, Record
+from .ports import Clock, Record, RelayDirectory
 from .types import RelayName
 
 DEFAULT_SEND_TIMEOUT_S = 5.0

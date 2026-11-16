@@ -45,9 +45,12 @@ def test_core_does_not_import_ray() -> None:
                 for alias in node.names:
                     if alias.name.split(".")[0] in FORBIDDEN_ROOTS:
                         offenders.append(f"{path.name}:{node.lineno} import {alias.name}")
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                if node.module.split(".")[0] in FORBIDDEN_ROOTS:
-                    offenders.append(f"{path.name}:{node.lineno} from {node.module}")
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.module.split(".")[0] in FORBIDDEN_ROOTS
+            ):
+                offenders.append(f"{path.name}:{node.lineno} from {node.module}")
 
     assert not offenders, (
         "linkchat.core must not import Ray (ADR-0013). Found:\n  "

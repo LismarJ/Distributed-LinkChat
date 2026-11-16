@@ -8,6 +8,7 @@ tests are mostly about agreement and shape rather than about any single answer.
 from __future__ import annotations
 
 import collections
+import itertools
 
 import pytest
 
@@ -91,8 +92,9 @@ def test_the_list_is_ordered_by_descending_score() -> None:
     for mailbox_id in SAMPLE[:200]:
         listed = preference_list(mailbox_id)
         scores = [_score(mailbox_id, relay) for relay in listed]
+        pairs = list(zip(listed, scores, strict=True))
         assert scores == sorted(scores, reverse=True), (
-            f"{mailbox_id} is not ordered by score: {list(zip(listed, scores))}"
+            f"{mailbox_id} is not ordered by score: {pairs}"
         )
 
 
@@ -102,7 +104,7 @@ def test_ties_are_broken_by_name_not_by_listing_order() -> None:
 
     for mailbox_id in SAMPLE[:500]:
         listed = preference_list(mailbox_id)
-        for earlier, later in zip(listed, listed[1:]):
+        for earlier, later in itertools.pairwise(listed):
             first_score = _score(mailbox_id, earlier)
             second_score = _score(mailbox_id, later)
             if first_score == second_score:
@@ -145,9 +147,7 @@ def test_losing_a_relay_only_moves_the_mailboxes_it_won() -> None:
     assert unaffected, "the sample should contain mailboxes relay-0 does not hold"
     for mailbox_id in unaffected:
         before = list(primaries(mailbox_id))
-        after = [r for r in preference_list(mailbox_id) if r != departing][
-            :PRIMARY_COUNT
-        ]
+        after = [r for r in preference_list(mailbox_id) if r != departing][:PRIMARY_COUNT]
         assert before == after, (
             f"{mailbox_id} was not held by {departing} yet its primaries moved"
         )

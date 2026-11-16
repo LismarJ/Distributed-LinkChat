@@ -13,7 +13,7 @@ C7 and lives in the client.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import msgpack
 
@@ -116,7 +116,7 @@ def encode(payload: Payload) -> bytes:
         "prev": payload.prev,
         "sent_at": payload.sent_at,
     }
-    encoded = msgpack.packb(document, use_bin_type=True)
+    encoded = cast(bytes, msgpack.packb(document, use_bin_type=True))
     if encoded is None:  # pragma: no cover - msgpack returns bytes for a dict
         raise MalformedPayload("msgpack produced nothing")
     if len(encoded) > MAX_PLAINTEXT:

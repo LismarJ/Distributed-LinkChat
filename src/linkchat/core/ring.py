@@ -57,7 +57,7 @@ def _score(mailbox_id: str, relay: str) -> int:
     mailbox "ab" with relay "c" and mailbox "a" with relay "bc" would hash the
     same string.
     """
-    material = f"{mailbox_id}\x00{relay}".encode("utf-8")
+    material = f"{mailbox_id}\x00{relay}".encode()
     digest = hashlib.blake2b(material, digest_size=SCORE_BYTES).digest()
     return int.from_bytes(digest, "big")
 

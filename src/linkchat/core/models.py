@@ -18,12 +18,12 @@ from .ports import PullResult, Record, RelayStatus, Tombstone
 from .types import EnvelopeId, RelayName
 
 __all__ = [
-    "Record",
-    "Tombstone",
-    "PullResult",
-    "RelayStatus",
     "Envelope",
+    "PullResult",
+    "Record",
+    "RelayStatus",
     "StoreReceipt",
+    "Tombstone",
 ]
 
 # `Envelope` is the name the other draft gave the stored unit. The reconciled

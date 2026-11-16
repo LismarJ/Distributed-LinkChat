@@ -37,7 +37,8 @@ def connect() -> None:
 
 
 def stamp() -> str:
-    return time.strftime("%H:%M:%S", time.gmtime()) + f".{int(time.time() * 1000) % 1000:03d}"
+    ms = int(time.time() * 1000) % 1000
+    return time.strftime("%H:%M:%S", time.gmtime()) + f".{ms:03d}"
 
 
 def say(text: str = "") -> None:
@@ -81,17 +82,17 @@ def cmd_nodes() -> None:
             continue
         alive += 1
         resources = node.get("Resources", {})
+        object_store_mib = int(resources.get("object_store_memory", 0)) // (1024 * 1024)
         say(
             f"  {node['NodeID'][:12]}  {node.get('NodeManagerAddress', '?'):<16}"
             f" cpus={resources.get('CPU', 0):<4}"
             f" relay_slot={resources.get('relay_slot', 0):<4}"
-            f" object_store={int(resources.get('object_store_memory', 0)) // (1024 * 1024)}MiB"
+            f" object_store={object_store_mib}MiB"
         )
     say(f"alive nodes: {alive}")
     say()
     say("For memory per node, run on the host (the figure the plan needs):")
     say("  docker stats --no-stream --format 'table {{.Name}}\\t{{.MemUsage}}'")
-
 
 # ---------------------------------------------------------------------------
 
@@ -205,7 +206,7 @@ def check_concurrency_groups() -> None:
         say("               the way the design assumes. This blocks R3.")
 
     ray.get(handle.store.remote("wake", b"x" * 16), timeout=5)
-    done, pending = ray.wait(parked, num_returns=len(parked), timeout=8)
+    done, _pending = ray.wait(parked, num_returns=len(parked), timeout=8)
     say(f"  parked calls that returned after a store: {len(done)}/{len(parked)}")
 
 

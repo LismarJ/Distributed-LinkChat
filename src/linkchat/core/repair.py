@@ -44,8 +44,7 @@ async def resync(
     asked; the caller (the relay actor) then flips to READY.
     """
     raise NotImplementedError(
-        "R6: sync on restart. Graded mechanism — implement against "
-        "tests/test_repair.py."
+        "R6: sync on restart. Graded mechanism — implement against tests/test_repair.py."
     )
 
 
@@ -65,6 +64,5 @@ async def handoff_round(
     round; the stand-in keeps serving the record meanwhile.
     """
     raise NotImplementedError(
-        "R7: hinted handoff. Graded mechanism — implement against "
-        "tests/test_repair.py."
+        "R7: hinted handoff. Graded mechanism — implement against tests/test_repair.py."
     )
