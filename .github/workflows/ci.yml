@@ -1,0 +1,31 @@
+name: checks
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      # 3.12, not the newest: Ray supports 3.10 to 3.13 and cannot install on 3.14.
+      - run: uv venv --python 3.12
+      - run: uv sync --extra dev
+
+      - name: core must not import Ray (ADR-0013)
+        # Run this first and on its own. It is the rule that keeps phase 2 to
+        # replacing one package instead of rewriting the system, so it should
+        # fail loudly rather than inside a long test report.
+        run: uv run pytest tests/test_core_is_ray_free.py -v
+
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest

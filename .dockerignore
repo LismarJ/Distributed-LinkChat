@@ -1,0 +1,24 @@
+# Keep the build context small: it is copied on every build, and build time is
+# what we pay on every iteration.
+.git/
+.github/
+docs/
+tests/
+*.pdf
+*.rar
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+node_modules/
+data/
+*.sqlite*
+*.db
+.env
