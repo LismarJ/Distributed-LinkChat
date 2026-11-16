@@ -51,9 +51,13 @@ addopts = "-q --strict-markers"
 [tool.ruff]
 line-length = 90
 target-version = "py311"
+extend-exclude = ["spike", "docs"]  # spike: throwaway prototype; docs: keep samples as written
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ASYNC", "TID"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/test_ray_runtime.py" = ["E402"]  # imports follow pytest.importorskip on purpose
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "parents"
@@ -71,3 +75,27 @@ warn_unreachable = true
 # Ray ships no type information for much of its API surface.
 module = ["ray.*", "msgpack.*", "nacl.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Pytest fixtures and helpers do not justify full annotations. `strict = true`
+# turns on TWO flags that raise `no-untyped-def`, so both have to be disabled.
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
+# Ray's type information is incomplete on the surface we use:
+# - `concurrency_groups=` is missing from the `ray.remote` overloads
+# - `ActorHandle` is generic, but Ray returns it unparameterised
+# - `RelayActor.options()` (added by the @ray.remote decorator) is untyped
+# - `ray.get()` returns Any, hence the gateway's no-any-return errors
+module = ["linkchat.ray_runtime.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disable_error_code = [
+    "call-overload",
+    "attr-defined",
+    "type-arg",
+    "no-any-return",
+]
