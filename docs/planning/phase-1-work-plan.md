@@ -134,6 +134,25 @@ Two things found while writing it, worth keeping:
   exists. The envelope, the ports and the constants are deliberately stdlib
   only, so that the file both tracks depend on could be checked today.
 
+**2026-11-16. R3 and R4 scaffolded, pre-spike.** The relay actor
+(`ray_runtime/relay_actor.py`), the idempotent bootstrap (`bootstrap.py`) and the
+gateway, directory and peers over actor calls (`gateway.py`) are written, against
+the documented Ray behaviour and marked subject to rework if the spike disproves
+it. Done against the plan's sequencing on purpose, with eyes open: R3+ were due
+after the spike, so the repair *orchestration* (R5-R7, graded) and the loop and
+metrics hardening (R8, R9) are deliberately left as marked hooks rather than
+written ahead. What a peer calls (`pull`, `handoff`) is there, since it is a
+one-liner over the R2 store; what decides *when* to call it is not.
+
+Verified only as far as this machine allows: syntax parses, `core` stays
+Ray-free, and `core` still imports. The Ray paths cannot run here (no Ray on
+Python 3.14). The CI tests in `tests/test_ray_runtime.py` exercise them on
+Python 3.12 with Ray, and are where gate G1's assumptions (async `__init__`,
+actor restart, which exception a caller sees first) get their first real test.
+The core interface this builds on was also reconciled with the thinner version
+that had been merged to `main` (see the reconciliation spec in
+`docs/superpowers/specs/`).
+
 ### G1 is the one that can change the plan
 
 If the spike shows that Ray does not restart a relay onto a spare node the way the documentation reads, the fallback is the design we wrote first: relays pinned to their container, `max_restarts=0`, and placement recomputed over the live relays. That is more of our own code, and it needs the examiners to agree that letting Ray restart actors is not available to us rather than that we declined to use it. Decide this on Nov 14, not later.
