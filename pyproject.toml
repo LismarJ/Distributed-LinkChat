@@ -1,0 +1,73 @@
+[project]
+name = "linkchat"
+version = "0.0.0"
+description = "Decentralized secure messaging (P08, Sistemas Distribuidos 2026)"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+# Ray supports Python 3.10 to 3.13. The upper bound is therefore real, not
+# caution: Ray cannot be installed on 3.14. Note that the development machines
+# have 3.14 as their system Python, so the virtual environment must be created
+# against 3.12 explicitly: `uv venv --python 3.12`.
+
+dependencies = [
+    # Pinned exactly after the spike measures start time and image size (G1).
+    "ray[default]>=2.60,<3",
+    "msgpack>=1.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "aiosqlite>=0.20",
+    "pynacl>=1.5",
+    "cryptography>=43",
+    # The X3DH and Double Ratchet library is NOT listed yet on purpose.
+    # ADR-0009 adopts one, and confirming its licence and maintenance is the
+    # first step of task C6. Adding it here before that check would be the
+    # supply-chain mistake the ADR warns about.
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/linkchat"]
+
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+line-length = 90
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ASYNC", "TID"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+files = ["src/linkchat", "tests"]
+# Strict everywhere. The core is where a type error becomes a correctness bug,
+# and the runtime layer is thin enough that strictness costs little there.
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# Ray ships no type information for much of its API surface.
+module = ["ray.*", "msgpack.*", "nacl.*"]
+ignore_missing_imports = true

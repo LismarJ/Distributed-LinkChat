@@ -1,13 +1,47 @@
-.venv/
+# Python
 __pycache__/
 *.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+uv.lock
+
+# Tooling caches
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.env
-*.db
-dist/
-build/
-node_modules/
-uv.lock 
+.coverage
+htmlcov/
 
+# Client data: identity keys, ratchet state and message history.
+# Never commit any of this. It is the one copy of a user's conversations, and
+# the keys in it are not recoverable.
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# Secrets
+.env
+*.pem
+ray_auth_token
+auth_token
+
+# Frontend
+node_modules/
+src/linkchat/client_app/static/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Archives: docs/docs.rar was committed by accident once. Keep sources, not bundles.
+*.rar
+*.zip
+*.7z

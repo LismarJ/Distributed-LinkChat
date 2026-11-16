@@ -3,6 +3,8 @@
 **Project:** P08 · Mensajería segura descentralizada, Sistemas Distribuidos 2026, Universidad de La Habana, Facultad de Matemática y Computación
 **For:** the development team · **Date:** 2026-11-11
 
+> **Revised 2026-11-11.** Sections 1 to 8 were written from the brief alone. The examiners have since split the project into two phases: phase 1 on Ray, tolerating two simultaneous failures (due 2026-12-01), and phase 2 without Ray, tolerating partitions (due 2027-01-01). **Section 9** covers Ray and says which statements in sections 7 and 8 change. Where an earlier section mentions a three-month timeline, gossip discovery or a write quorum of two, section 9 has the current position.
+
 ---
 
 ## Glossary 
@@ -556,6 +558,81 @@ These belong in one parameter table, which is the next concrete deliverable afte
 - **Confirm the licences** of PyNaCl, `cryptography`, and any Double Ratchet package before the written report cites them.
 
 **Not attempted here, and belonging to the implementation plan instead:** the wire protocol and message schemas for both node types; a local storage schema (tables and indices; the seen-set in section 7.5 needs a unique index); a failure-injection-to-requirement test matrix (a way to demonstrate each of R1-R9 failing and recovering); and a work breakdown across the three of us.
+
+---
+
+## 9. Ray, and the rules that arrived after this report
+
+Sections 1 to 8 were written from the brief. On 2026-11-11 the examiners added rules that the brief does not contain, and one of them names a technology none of our reading had covered. This section brings the report up to date. The full study of Ray is [`../research/07-ray.md`](../research/07-ray.md).
+
+### 9.1 What the examiners added
+
+- The project has two deliveries: **2026-12-01** and **2027-01-01**.
+- The first is built on **Ray** and Python. We must use every Ray feature that applies to the project naturally, and must not reimplement what Ray offers.
+- The first must survive **any two elements failing at the same time**. The head node is the exception: it will not be killed. Network partitions do not have to be survived.
+- The second delivery **removes Ray completely**. Everything is redesigned and implemented by us, and partitions must be survived.
+- Throughout, we are expected to think through cases and edge cases and to say what each decision gains and loses, because distributed systems have problems that nothing solves completely.
+
+Two requirements therefore join R1 to R9: **R10**, tolerance of two simultaneous failures, and **R11**, tolerance of partitions (phase 2 only).
+
+### 9.2 What Ray is
+
+Ray is an open-source framework for running Python across a cluster of machines. It was built at UC Berkeley for machine-learning workloads, which is why it did not appear in a study of messaging systems. Underneath the machine-learning libraries is a small general-purpose core with three ideas:
+
+- A **task** is a function that runs in another process.
+- An **actor** is an object that lives in its own process and keeps state between calls. Other processes call its methods remotely. Actors can be given names, and any process in the cluster can look one up by name.
+- An **object** is an immutable value in a store shared across the cluster.
+
+A Ray cluster has one **head node**, which keeps the directory of the cluster (which nodes are alive, where each actor is), and any number of worker nodes. A node joins by being given the head's address.
+
+### 9.3 What Ray does when things fail
+
+This is the part that matters most to us.
+
+- Ray notices when a node or a process dies.
+- If told to (`max_restarts`), Ray **restarts a dead actor**, on another node if its own node is gone.
+- The restarted actor is **empty**. Ray runs its constructor again and restores nothing. The documentation is direct about it: for actors with important state, "the application is responsible for recovering the state".
+- A call that fails may or may not have run; Ray says there is "no guarantee on whether the actor executed the task or not". Ray can retry calls automatically, and then a call may run twice.
+- Ray gives no ordering guarantee for calls to the kind of actor we need.
+- If the head node fails, "the entire Ray cluster fails".
+
+### 9.4 How Ray lines up with the toolbox in section 7
+
+| Section 7 topic | With Ray in phase 1 |
+|---|---|
+| 7.1 Where a mailbox lives | Still ours, and simpler: Ray keeps a fixed set of named relays alive, so the hash ring never changes |
+| 7.2 Membership and failure detection | Ray's. We build none, and are told not to |
+| 7.3 Ordering | Still ours. Ray orders nothing for us |
+| 7.4 Replication and repair | Still ours, and the heart of phase 1. Ray restarts relays empty; we refill them |
+| 7.5 Duplicate suppression | Still ours, and needed more: Ray's retries can repeat a call |
+| 7.6 Retry and the outbox | Still ours; Ray's retries sit underneath |
+
+So Ray takes over the plumbing we had planned to write by hand and leaves the distributed-data problems where they were. One line summarises the phase 1 design: Ray keeps the relays alive, and we keep the data alive.
+
+### 9.5 What Ray costs
+
+- **A single head node.** It holds no messages, so R9 is unaffected, but it is a single point of failure for the cluster. The examiners have put it out of scope.
+- **One trust domain.** Ray's documentation says it "expects to run in a safe network environment and to act upon trusted code". Inside one Ray cluster we cannot claim relays distrust each other. Section 8.4's claims about cryptography stand; the claim about untrusted relays waits for phase 2.
+- **Heavier nodes.** A Ray node runs several system processes besides ours.
+- **Features that look useful and are not.** Ray's object store ties an object's life to the process that created it, which would make a stored message vanish when its sender went offline. Ray's recipe for restoring actor state uses a checkpoint on shared storage, which would be the central database R9 forbids. Using everything that applies naturally also means recognising what does not.
+
+### 9.6 What two simultaneous failures change
+
+Section 7.4 worked with three replicas and confirmation at two. That is not enough: the two that confirmed could be the two that fail. To survive two crashes a message must be on **three** relays before the sender is told it was sent.
+
+A majority quorum, which section 7.4 also discusses, is not needed in phase 1. Majorities exist to tell a crashed node from an unreachable one, and phase 1 has no partitions. Phase 2 does, and there the question reopens. Our direction for phase 2 is to stay available on both sides of a partition and merge afterwards, which is safe for us because envelopes never change and are named by their content.
+
+### 9.7 What this does to section 8
+
+- **8.3, the architecture:** unchanged in shape. The words "gossip-maintained overlay" describe phase 2. In phase 1 the relays are Ray actors and Ray maintains the overlay.
+- **8.5, parameters:** the SWIM intervals belong to phase 2. Replica count and write rule are now proposed in [ADR-0005](../decisions/0005-three-copies-before-sent.md): three copies, all confirmed, five relays.
+- **8.5, "does a relay persist to disk at all":** no. Memory only, with three copies as the durability mechanism.
+- **8.5, "how does a client learn the overlay membership":** in phase 1 it does not need to; relays are found by name. The question returns in phase 2.
+- **8.5, "a threat model, stated once":** for phase 1, relays that follow the protocol but would read what they store; one operator; a private network.
+- **8.5, UDP broadcast on Docker:** not needed in phase 1. Relevant again in phase 2.
+- **8.5, "a failure-injection-to-requirement test matrix":** now exists in outline in [`../design/fault-tolerance.md`](../design/fault-tolerance.md), together with eighteen edge cases and the tradeoff of each decision.
+
+The design that follows from all this is in Report 2, sections 8 to 15.
 
 ---
 
