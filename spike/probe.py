@@ -126,7 +126,7 @@ class Probe:
         self._mail.clear()
         try:
             await asyncio.wait_for(self._mail.wait(), timeout=timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
         return True
 

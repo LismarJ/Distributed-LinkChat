@@ -51,9 +51,9 @@ how long a real call to a restarting relay takes and this is tuned against it.""
 
 
 async def _invoke(
-    directory: "RayRelayDirectory",
+    directory: RayRelayDirectory,
     name: RelayName,
-    make_ref: Callable[["ray.actor.ActorHandle"], Awaitable[object]],
+    make_ref: Callable[[ray.actor.ActorHandle], Awaitable[object]],
     timeout_s: float,
 ):
     """Call one actor method with a timeout, mapping Ray's failures to ours.
@@ -76,7 +76,7 @@ async def _invoke(
         # re-raises application errors as an instance of their original type, so
         # this catches them before the Ray-infrastructure cases below.
         raise
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise RelayUnreachable(f"{name} did not answer within {timeout_s}s") from exc
     except ray.exceptions.GetTimeoutError as exc:
         raise RelayUnreachable(f"{name} did not answer within {timeout_s}s") from exc
@@ -123,7 +123,7 @@ class RayRelayDirectory(RelayDirectory):
         """The peer view used by a relay to repair itself and the others."""
         return _RayRelayPeers(this_relay, self, self._timeout_s)
 
-    def _resolve(self, name: RelayName) -> "ray.actor.ActorHandle":
+    def _resolve(self, name: RelayName) -> ray.actor.ActorHandle:
         handle = self._handles.get(name)
         if handle is None:
             handle = ray.get_actor(name, namespace=self._namespace)

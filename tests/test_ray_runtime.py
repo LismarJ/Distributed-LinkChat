@@ -91,7 +91,6 @@ async def test_pull_and_handoff_between_relays(ray_cluster):
     record = make_record(
         mailbox="mailbox-handoff", body=b"via-standin", hint=str(primary)
     )
-    await directory.gateway(standin)  # resolve
     await _wait_ready(directory.gateway(standin))
     await peers.handoff(standin, [record], [])
 

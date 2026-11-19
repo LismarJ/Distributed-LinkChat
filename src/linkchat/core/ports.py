@@ -16,9 +16,10 @@ If one of those appears here, the phase 2 migration has already started leaking.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol, Sequence, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from .types import Credential, EnvelopeId, MailboxId, RelayName, UserId
 
@@ -286,7 +287,8 @@ class RelayPeers(Protocol):
     Deliberately missing: `digest`, the periodic comparison of what two relays
     hold. ADR-0014 defers it from phase 1, so shipping the method would be dead
     interface. When it arrives it belongs here, as
-    `async def digest(self, peer: RelayName, for_relay: RelayName) -> Sequence[tuple[EnvelopeId, bool]]`
+    `async def digest(self, peer: RelayName, for_relay: RelayName)
+    -> Sequence[tuple[EnvelopeId, bool]]`
     returning each id and whether it is a tombstone.
     """
 

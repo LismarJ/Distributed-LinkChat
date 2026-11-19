@@ -37,8 +37,8 @@ from linkchat.core.ports import (
     PullResult,
     Record,
     RelayState,
-    RelaySyncing,
     RelayStatus,
+    RelaySyncing,
     Tombstone,
 )
 from linkchat.core.types import Credential, EnvelopeId, MailboxId, RelayName, UserId
@@ -67,7 +67,9 @@ class RelayActor:
     clients. Durability is the three copies, not this process.
     """
 
-    async def __init__(self, index: int, ring_size: int = RELAY_COUNT) -> None:
+    async def __init__(  # type: ignore[misc]  # async __init__ is a G1 spike item
+        self, index: int, ring_size: int = RELAY_COUNT
+    ) -> None:
         # Whether Ray awaits an `async def __init__` on an async actor is itself
         # a spike item; if it does not, this moves to a `start()` method the
         # bootstrap calls once. Kept as the design wrote it for now.
@@ -117,9 +119,7 @@ class RelayActor:
             self._wake(record.mailbox_id)
 
     @ray.method(concurrency_group="client")
-    async def fetch(
-        self, mailbox_id: MailboxId, credential: Credential
-    ) -> list[Record]:
+    async def fetch(self, mailbox_id: MailboxId, credential: Credential) -> list[Record]:
         """Everything held for a mailbox right now. No history, by design."""
         self._require_ready()
         # TODO(ADR-0007): check `credential` before returning. Carried, not yet
@@ -168,7 +168,7 @@ class RelayActor:
         try:
             await asyncio.wait_for(event.wait(), timeout_s)
             return True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
         finally:
             # Drop the event if nobody else is still waiting on it.
@@ -190,9 +190,7 @@ class RelayActor:
         return PullResult(records=records, tombstones=tombstones)
 
     @ray.method(concurrency_group="repair")
-    async def handoff(
-        self, records: list[Record], tombstones: list[Tombstone]
-    ) -> None:
+    async def handoff(self, records: list[Record], tombstones: list[Tombstone]) -> None:
         """Absorb records a stand-in is returning, and tombstones we may lack."""
         self._store.absorb(records, tombstones)
         for mailbox_id in {r.mailbox_id for r in records}:

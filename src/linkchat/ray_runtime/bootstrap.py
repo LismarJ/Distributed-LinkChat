@@ -23,7 +23,7 @@ NAMESPACE = "linkchat"
 `ray.get_actor(name, namespace=NAMESPACE)` resolves the same actor everywhere."""
 
 
-def bootstrap(ring_size: int = RELAY_COUNT) -> dict[RelayName, "ray.actor.ActorHandle"]:
+def bootstrap(ring_size: int = RELAY_COUNT) -> dict[RelayName, ray.actor.ActorHandle]:
     """Ensure `relay-0 .. relay-(ring_size-1)` exist, and return their handles.
 
     Idempotent. Creating an actor that already exists returns the existing one

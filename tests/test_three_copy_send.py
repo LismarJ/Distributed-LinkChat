@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from linkchat.core.replication import send_to_three
 from linkchat.core.ring import primaries
-from linkchat.core.types import MailboxId
+from linkchat.core.types import MailboxId, RelayName
 
 from .conftest import make_record
 from .fakes.transport import FakeCluster
@@ -19,12 +19,12 @@ from .fakes.transport import FakeCluster
 MAILBOX = "mb-r5"
 
 
-def _holders(cluster: FakeCluster, mailbox: str, envelope_id) -> list[str]:
+def _holders(cluster: FakeCluster, mailbox: str, envelope_id) -> list[RelayName]:
     mb = MailboxId(mailbox)
     return [name for name, store in cluster.stores.items() if store.has(mb, envelope_id)]
 
 
-def _stored_record(cluster: FakeCluster, name: str, mailbox: str, envelope_id):
+def _stored_record(cluster: FakeCluster, name: RelayName, mailbox: str, envelope_id):
     for record in cluster.stores[name].fetch(MailboxId(mailbox)):
         if record.envelope_id == envelope_id:
             return record

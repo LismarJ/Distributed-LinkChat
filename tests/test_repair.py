@@ -29,7 +29,9 @@ async def test_resync_refills_a_restarted_relay_from_peers():
     cluster.restart(prim[0])  # empty, SYNCING
     assert not cluster.stores[prim[0]].has(MailboxId(R6_MAILBOX), record.envelope_id)
 
-    await resync(prim[0], cluster.stores[prim[0]], cluster.peers(prim[0]), clock=cluster.clock)
+    await resync(
+        prim[0], cluster.stores[prim[0]], cluster.peers(prim[0]), clock=cluster.clock
+    )
 
     assert cluster.stores[prim[0]].has(MailboxId(R6_MAILBOX), record.envelope_id)
 
@@ -44,7 +46,9 @@ async def test_resync_survives_a_down_peer():
     cluster.restart(prim[0])
     cluster.kill(prim[1])  # one holder down; prim[2] still answers
 
-    await resync(prim[0], cluster.stores[prim[0]], cluster.peers(prim[0]), clock=cluster.clock)
+    await resync(
+        prim[0], cluster.stores[prim[0]], cluster.peers(prim[0]), clock=cluster.clock
+    )
 
     assert cluster.stores[prim[0]].has(MailboxId(R6_MAILBOX), record.envelope_id)
 
