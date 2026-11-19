@@ -61,6 +61,7 @@ class MessageState(StrEnum):
     PENDING = "pending"
     SENT = "sent"
     RECEIVED = "received"
+    NOT_DELIVERED = "not_delivered"
 
 
 class UnknownConversation(LookupError):
@@ -231,6 +232,20 @@ class History:
                 "UPDATE messages SET state = ? WHERE envelope_id = ? AND state = ?",
                 (MessageState.SENT.value, eid, MessageState.PENDING.value),
             )
+
+    def give_up(self, eid: EnvelopeId) -> None:
+        """Past its expiry: relays would drop it anyway. Idempotent."""
+        with self._tx() as db:
+            db.execute("DELETE FROM outbox WHERE envelope_id = ?", (eid,))
+            db.execute(
+                "UPDATE messages SET state = ? WHERE envelope_id = ? AND state = ?",
+                (MessageState.NOT_DELIVERED.value, eid, MessageState.PENDING.value),
+            )
+
+    def next_due(self) -> float | None:
+        """When the next retry is due, or None if the outbox is empty."""
+        row = self._conn.execute("SELECT MIN(next_attempt_at) FROM outbox").fetchone()
+        return row[0]  # type: ignore[no-any-return]
 
     # -- receiving ----------------------------------------------------------
 
