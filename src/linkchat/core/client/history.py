@@ -86,6 +86,12 @@ class StoredMessage:
     prev: EnvelopeId | None
     sent_at: float
     state: MessageState
+    received_at: float | None = None
+    """When the local client committed this message. `None` for outgoing.
+
+    Used by the ordering layer (C7) to time out a message whose predecessor
+    never arrived. Never used for ordering itself.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,7 +343,7 @@ class History:
         """In storage order. Display order is task C7."""
         rows = self._conn.execute(
             "SELECT envelope_id, peer, direction, text, clock_low, clock_high, prev,"
-            " sent_at, state FROM messages WHERE peer = ? ORDER BY rowid",
+            " sent_at, state, received_at FROM messages WHERE peer = ? ORDER BY rowid",
             (peer,),
         ).fetchall()
         return [
@@ -350,6 +356,7 @@ class History:
                 prev=EnvelopeId(r[6]) if r[6] is not None else None,
                 sent_at=r[7],
                 state=MessageState(r[8]),
+                received_at=r[9],
             )
             for r in rows
         ]
