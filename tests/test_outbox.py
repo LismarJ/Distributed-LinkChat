@@ -18,7 +18,7 @@ from linkchat.core.replication import SendResult, send_to_three
 from linkchat.core.types import EnvelopeId, MailboxId, RelayName
 
 from .fakes.transport import FakeCluster, ManualClock
-from .test_history import MAILBOX, ME, PEER, seal
+from .test_history import INBOX, MAILBOX, ME, PEER, seal
 
 TTL = 3600.0
 OK = SendResult(confirmed_relays=tuple(RelayName(f"relay-{i}") for i in range(3)))
@@ -47,7 +47,7 @@ class FakeSend:
 
 def make_history(path: Path) -> History:
     h = History(path, ME)
-    h.open_conversation(PEER, MAILBOX)
+    h.open_conversation(PEER, send_mailbox=MAILBOX, recv_mailbox=INBOX)
     return h
 
 

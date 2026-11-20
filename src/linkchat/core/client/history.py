@@ -17,9 +17,9 @@ from linkchat.core.envelope import envelope_id as compute_envelope_id
 from linkchat.core.payload import Clock2, Payload, slot_of
 from linkchat.core.types import EnvelopeId, MailboxId, UserId
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-_SCHEMA = """
+_SCHEMA_V1 = """
 CREATE TABLE conversations (
     peer          TEXT PRIMARY KEY,
     mailbox_id    TEXT NOT NULL,
@@ -55,6 +55,14 @@ CREATE TABLE seen (
     seen_at      REAL NOT NULL
 );
 """
+
+# ADR-0007: one mailbox per direction. `mailbox_id` was the one we send to.
+_SCHEMA_V2 = """
+ALTER TABLE conversations RENAME COLUMN mailbox_id TO send_mailbox;
+ALTER TABLE conversations ADD COLUMN recv_mailbox TEXT NOT NULL DEFAULT '';
+"""
+
+_MIGRATIONS = {1: _SCHEMA_V1, 2: _SCHEMA_V2}
 
 
 class MessageState(StrEnum):
@@ -117,31 +125,52 @@ class History:
         self._conn.execute("COMMIT")
 
     def _migrate(self) -> None:
+        """Apply every migration newer than the file, all in one transaction."""
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if version >= SCHEMA_VERSION:
             return
         with self._tx() as db:
-            for statement in _SCHEMA.split(";"):
-                if statement.strip():
-                    db.execute(statement)
+            for target in range(version + 1, SCHEMA_VERSION + 1):
+                for statement in _MIGRATIONS[target].split(";"):
+                    if statement.strip():
+                        db.execute(statement)
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    @property
+    def me(self) -> UserId:
+        return self._me
 
     # -- conversations ------------------------------------------------------
 
-    def open_conversation(self, peer: UserId, mailbox_id: MailboxId) -> None:
+    def open_conversation(
+        self, peer: UserId, *, send_mailbox: MailboxId, recv_mailbox: MailboxId
+    ) -> None:
         """Idempotent: opening an existing conversation changes nothing."""
         slot_of(self._me, peer)  # rejects a conversation with oneself
         with self._tx() as db:
             db.execute(
-                "INSERT OR IGNORE INTO conversations (peer, mailbox_id) VALUES (?, ?)",
-                (peer, mailbox_id),
+                "INSERT OR IGNORE INTO conversations (peer, send_mailbox, recv_mailbox)"
+                " VALUES (?, ?, ?)",
+                (peer, send_mailbox, recv_mailbox),
             )
+
+    def peers(self) -> list[UserId]:
+        rows = self._conn.execute("SELECT peer FROM conversations ORDER BY peer")
+        return [UserId(r[0]) for r in rows]
+
+    def recv_mailbox(self, peer: UserId) -> MailboxId:
+        row = self._conn.execute(
+            "SELECT recv_mailbox FROM conversations WHERE peer = ?", (peer,)
+        ).fetchone()
+        if row is None:
+            raise UnknownConversation(peer)
+        return MailboxId(row[0])
 
     def _conversation(
         self, db: sqlite3.Connection, peer: UserId
     ) -> tuple[str, int, int, str | None]:
         row = db.execute(
-            "SELECT mailbox_id, my_count, peer_count, last_sent_id"
+            "SELECT send_mailbox, my_count, peer_count, last_sent_id"
             " FROM conversations WHERE peer = ?",
             (peer,),
         ).fetchone()
