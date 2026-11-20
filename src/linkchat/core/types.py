@@ -11,8 +11,8 @@ from typing import NewType
 MailboxId = NewType("MailboxId", str)
 """Opaque identifier of a mailbox. A relay must learn nothing from it.
 
-Derivation is ADR-0007 (pending): one mailbox per conversation or one per
-direction is still an open decision, and it is the privacy-bearing one.
+One per direction of each conversation, derived from the two user ids
+(ADR-0007, `core/client/mailbox_ids.py`).
 """
 
 EnvelopeId = NewType("EnvelopeId", str)
@@ -35,7 +35,7 @@ UserId = NewType("UserId", str)
 Credential = NewType("Credential", bytes)
 """Proof that the caller may read from or delete from a mailbox.
 
-Its contents are ADR-0007 (pending). It is declared here so that the ports can
-be frozen before that decision is taken: today it is carried through the calls
-and not yet checked.
+Its contents are still open: ADR-0007 settled the mailbox ids, not this. It is
+declared here so that the ports can be frozen before that decision is taken:
+today it is carried through the calls and not yet checked.
 """
