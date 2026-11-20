@@ -20,6 +20,7 @@ from linkchat.core.types import EnvelopeId, MailboxId, UserId
 ME = UserId("aaaa")
 PEER = UserId("bbbb")
 MAILBOX = MailboxId("mb-1")
+INBOX = MailboxId("mb-in")
 
 
 def seal(payload: Payload) -> bytes:
@@ -30,7 +31,7 @@ def seal(payload: Payload) -> bytes:
 @pytest.fixture
 def history(tmp_path: Path):
     h = History(tmp_path / "client.db", ME)
-    h.open_conversation(PEER, MAILBOX)
+    h.open_conversation(PEER, send_mailbox=MAILBOX, recv_mailbox=INBOX)
     yield h
     h.close()
 
@@ -135,7 +136,7 @@ def test_trim_seen_only_drops_old_ids(history: History) -> None:
 def test_reopening_keeps_everything(tmp_path: Path) -> None:
     path = tmp_path / "client.db"
     h = History(path, ME)
-    h.open_conversation(PEER, MAILBOX)
+    h.open_conversation(PEER, send_mailbox=MAILBOX, recv_mailbox=INBOX)
     h.queue_outgoing(PEER, "hola", sent_at=1.0, expires_at=99.0, seal=seal)
     h.close()
 
@@ -151,7 +152,7 @@ def _worker(path: str, seed: int, done, ready) -> None:
     """Writes forever. done[0] / done[1] count sends / receipts whose commit returned."""
     rng = random.Random(seed)
     h = History(path, ME)
-    h.open_conversation(PEER, MAILBOX)
+    h.open_conversation(PEER, send_mailbox=MAILBOX, recv_mailbox=INBOX)
     ready.set()
     n = 0
     while True:
@@ -221,3 +222,24 @@ def test_killed_at_any_point_reopens_consistent(tmp_path: Path, seed: int) -> No
     # Nothing whose commit returned is lost; at most the one in flight is extra.
     assert done[0] <= outgoing <= done[0] + 1
     assert done[1] <= len(stored) - outgoing <= done[1] + 1
+
+
+def test_a_version_1_file_migrates_to_two_mailboxes(tmp_path: Path) -> None:
+    """A database written before ADR-0007 opens, keeping its conversation."""
+    from linkchat.core.client.history import _SCHEMA_V1
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript(_SCHEMA_V1)
+    db.execute("INSERT INTO conversations (peer, mailbox_id) VALUES ('bbbb', 'mb-old')")
+    db.execute("PRAGMA user_version = 1")
+    db.commit()
+    db.close()
+
+    h = History(path, ME)
+    h.queue_outgoing(PEER, "hola", sent_at=1.0, expires_at=99.0, seal=seal)
+
+    assert h.peers() == [PEER]
+    [item] = h.due_outbox(now=1.0)
+    assert item.mailbox_id == "mb-old"  # the old mailbox became send_mailbox
+    h.close()
