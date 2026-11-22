@@ -13,9 +13,8 @@ from linkchat.core.client.ordering import DisplayMessage, order_messages
 from linkchat.core.payload import Clock2
 from linkchat.core.types import EnvelopeId, UserId
 
-
 ALICE = UserId("aaaa")  # low slot
-BOB = UserId("bbbb")    # high slot
+BOB = UserId("bbbb")  # high slot
 
 ME, PEER = ALICE, BOB
 
@@ -266,36 +265,66 @@ def test_held_message_is_released_with_gap_after_timeout() -> None:
     assert shown[0].after_gap is True
 
 
-def test_release_after_gap_does_not_advance_the_clock() -> None:
-    """A timeout release does not satisfy causal dependencies."""
+def test_release_after_gap_advances_the_clock() -> None:
+    """Only the first message after the gap is marked; its successor flows normally."""
 
     orphan = msg(
-        "b",
-        outgoing=False,
-        low=0,
-        high=2,
-        prev="a",
-        received_at=NOW - TIMEOUT - 5,
+        "b", outgoing=False, low=0, high=2, prev="a", received_at=NOW - TIMEOUT - 5
     )
-
     after = msg(
-        "c",
-        outgoing=False,
-        low=0,
-        high=3,
-        prev="b",
-        received_at=NOW - TIMEOUT - 5,
+        "c", outgoing=False, low=0, high=3, prev="b", received_at=NOW - TIMEOUT - 5
     )
 
-    shown = order(
-        [orphan, after],
-        now=NOW,
-    )
+    shown = order([orphan, after], now=NOW)
 
     assert ids(shown) == ["b", "c"]
+    assert [d.after_gap for d in shown] == [True, False]
 
-    # Both are explicitly released across gaps.
-    assert all(d.after_gap for d in shown)
+
+def test_after_a_gap_new_messages_flow_without_waiting() -> None:
+    """Bob's #1 is lost: #2 is marked, and #5, just arrived, shows at once."""
+
+    old = NOW - TIMEOUT - 5
+    later = [
+        msg(f"b{n}", outgoing=False, low=0, high=n, prev=f"b{n - 1}", received_at=old)
+        for n in (2, 3, 4)
+    ]
+    fresh = msg("b5", outgoing=False, low=0, high=5, prev="b4", received_at=NOW - 1)
+
+    shown = order([*later, fresh])
+
+    assert ids(shown) == ["b2", "b3", "b4", "b5"]
+    assert [d.after_gap for d in shown] == [True, False, False, False]
+
+
+def test_own_message_after_a_gap_is_shown() -> None:
+    """Alice replied to Bob's #4 while #1 was missing: her message must appear."""
+
+    old = NOW - TIMEOUT - 5
+    theirs = [
+        msg(f"b{n}", outgoing=False, low=0, high=n, prev=f"b{n - 1}", received_at=old)
+        for n in (2, 3, 4)
+    ]
+    mine = msg("m1", outgoing=True, low=1, high=4)
+
+    shown = order([*theirs, mine])
+
+    assert ids(shown) == ["b2", "b3", "b4", "m1"]
+    assert shown[-1].after_gap is False
+
+
+def test_late_predecessor_closes_the_gap() -> None:
+    """Recomputed from scratch: once #1 arrives, nothing is marked any more."""
+
+    old = NOW - TIMEOUT - 5
+    first = msg("b1", outgoing=False, low=0, high=1, received_at=NOW - 1)
+    second = msg("b2", outgoing=False, low=0, high=2, prev="b1", received_at=old)
+
+    assert [d.after_gap for d in order([second])] == [True]
+
+    shown = order([first, second])
+    assert ids(shown) == ["b1", "b2"]
+    assert not any(d.after_gap for d in shown)
 
 
 def test_early_arrival_does_not_leapfrog_a_late_predecessor() -> None:
@@ -330,7 +359,7 @@ def test_early_arrival_does_not_leapfrog_a_late_predecessor() -> None:
     )
 
     assert ids(shown) == ["b", "c"]
-    assert all(d.after_gap for d in shown)
+    assert [d.after_gap for d in shown] == [True, False]  # c only needed b
 
 
 def test_outgoing_messages_never_time_out() -> None:
@@ -402,6 +431,42 @@ def test_concurrent_messages_have_a_deterministic_order() -> None:
 
     assert all(not d.after_gap for d in first)
     assert all(not d.after_gap for d in second)
+
+
+def test_both_clients_show_the_same_order() -> None:
+    """The plan's done-when: concurrent messages, the same order on both sides."""
+
+    def view(me: UserId, peer: UserId, arrival: list[tuple[str, UserId, int, int]]):
+        rows = [
+            StoredMessage(
+                envelope_id=EnvelopeId(eid),
+                peer=peer,
+                outgoing=sender == me,
+                text=eid,
+                clock=Clock2(low=low, high=high),
+                prev=None,
+                sent_at=0.0,
+                state=MessageState.SENT if sender == me else MessageState.RECEIVED,
+                received_at=None if sender == me else NOW - 1.0,
+            )
+            for eid, sender, low, high in arrival
+        ]
+        return ids(order_messages(rows, me=me, peer=peer, now=NOW))
+
+    # Each wrote twice before seeing the other: two concurrent chains, then a reply.
+    exchange = [
+        ("x1", ALICE, 1, 0),
+        ("x2", ALICE, 2, 0),
+        ("y1", BOB, 0, 1),
+        ("y2", BOB, 0, 2),
+        ("z", ALICE, 3, 2),
+    ]
+
+    alice_view = view(ALICE, BOB, exchange)
+    bob_view = view(BOB, ALICE, list(reversed(exchange)))
+
+    assert alice_view == bob_view
+    assert alice_view[-1] == "z"
 
 
 # ---------------------------------------------------------------------------

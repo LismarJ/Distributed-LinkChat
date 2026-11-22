@@ -7,7 +7,7 @@ Responsibilities:
 - Respect the predecessor (prev) chain.
 - Deterministically order concurrent messages.
 - Hold messages that cannot yet be delivered.
-- Release expired messages with an explicit gap marker.
+- Release expired messages with an explicit gap marker, once per gap.
 - Detect conflicting messages with the same sender counter.
 
 This module does not perform network I/O, ACKs, decryption,
@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from linkchat.core.client.history import StoredMessage
 from linkchat.core.payload import slot_of
 from linkchat.core.types import EnvelopeId, UserId
-
 
 DEFAULT_HOLD_TIMEOUT_S = 30.0
 """Time before a blocked message may be displayed with a gap marker."""
@@ -53,10 +52,10 @@ def order_messages(
 
     Concurrent messages are deterministically ordered by envelope_id.
 
-    Messages blocked by missing causal dependencies are held. When their
-    timeout expires, they may be displayed with after_gap=True.
-
-    Timeout releases do not advance the delivered vector clock.
+    A message blocked by a missing dependency is held. Once its timeout
+    expires it is displayed with after_gap=True, and that release counts as
+    delivering it: the clock advances, so what follows it flows normally and
+    the gap is marked once, not on every later message.
     """
 
     if hold_timeout_s < 0:
@@ -65,134 +64,55 @@ def order_messages(
     my_slot = slot_of(me, peer)
     their_slot = slot_of(peer, me)
 
-    delivered_low = 0
-    delivered_high = 0
-
+    delivered_upto = {"low": 0, "high": 0}
     delivered: set[EnvelopeId] = set()
     output: list[DisplayMessage] = []
 
     # Remove duplicated envelope IDs before ordering.
     unique_messages: dict[EnvelopeId, StoredMessage] = {}
-
     for message in messages:
         unique_messages.setdefault(message.envelope_id, message)
-
     pending = list(unique_messages.values())
 
-    # Identify messages that share the same sender and vector-clock counter.
-    # These are conflicting messages and cannot be safely delivered
-    # through the normal causal path.
-    conflicting_ids = _find_counter_conflicts(
-        pending,
-        my_slot,
-        their_slot,
-    )
+    # Messages sharing a sender counter cannot go through the normal path.
+    conflicting_ids = _find_counter_conflicts(pending, my_slot, their_slot)
 
-    # ---------------------------------------------------------
-    # Normal causal delivery
-    # ---------------------------------------------------------
+    def deliver(message: StoredMessage, *, after_gap: bool) -> None:
+        output.append(DisplayMessage(message=message, after_gap=after_gap))
+        delivered.add(message.envelope_id)
+        slot = _sender_slot(message, my_slot, their_slot)
+        counter = _counter_for_slot(message, slot)
+        delivered_upto[slot] = max(delivered_upto[slot], counter)
 
     while True:
-        newly_ready: list[StoredMessage] = []
-        still_pending: list[StoredMessage] = []
-
-        for message in pending:
-            if message.envelope_id in conflicting_ids:
-                still_pending.append(message)
-                continue
-
-            if _is_ready(
-                message,
-                delivered,
-                delivered_low,
-                delivered_high,
-                my_slot,
-                their_slot,
-            ):
-                newly_ready.append(message)
-            else:
-                still_pending.append(message)
-
-        pending = still_pending
-
-        if not newly_ready:
-            break
-
-        # Stable tie-break for concurrent messages.
-        newly_ready.sort(key=lambda message: message.envelope_id)
-
-        for message in newly_ready:
-            output.append(
-                DisplayMessage(
-                    message=message,
-                    after_gap=False,
+        # Normal causal delivery, in rounds, until nothing more is ready.
+        while True:
+            ready = [
+                message
+                for message in pending
+                if message.envelope_id not in conflicting_ids
+                and _is_ready(
+                    message,
+                    delivered,
+                    delivered_upto["low"],
+                    delivered_upto["high"],
+                    my_slot,
+                    their_slot,
                 )
-            )
+            ]
+            if not ready:
+                break
+            # Stable tie-break for concurrent messages.
+            for message in sorted(ready, key=lambda m: m.envelope_id):
+                deliver(message, after_gap=False)
+            pending = [m for m in pending if m.envelope_id not in delivered]
 
-            delivered.add(message.envelope_id)
-
-            sender_slot = (
-                my_slot if message.outgoing else their_slot
-            )
-
-            counter = (
-                message.clock.low
-                if sender_slot == "low"
-                else message.clock.high
-            )
-
-            if sender_slot == "low":
-                delivered_low = max(delivered_low, counter)
-            else:
-                delivered_high = max(delivered_high, counter)
-
-    # ---------------------------------------------------------
-    # Timeout delivery
-    # ---------------------------------------------------------
-
-    pending_sorted = sorted(
-        pending,
-        key=lambda message: _order_key(
-            message,
-            my_slot,
-            their_slot,
-        ),
-    )
-
-    still_held = set(pending)
-
-    for message in pending_sorted:
-
-        # Outgoing messages do not have a receive timestamp.
-        if message.received_at is None:
-            continue
-
-        elapsed = now - message.received_at
-
-        if elapsed < hold_timeout_s:
-            continue
-
-        # Prevent releasing a later message before an earlier
-        # pending message from the same sender.
-        if _blocked_by_lower_same_sender(
-            message,
-            pending_sorted,
-            still_held,
-            my_slot,
-            their_slot,
-        ):
-            continue
-
-        output.append(
-            DisplayMessage(
-                message=message,
-                after_gap=True,
-            )
-        )
-
-        still_held.discard(message)
-
-    return output
+        # Stuck: release the earliest message whose timeout has expired.
+        released = _next_timed_out(pending, now, hold_timeout_s, my_slot, their_slot)
+        if released is None:
+            return output
+        deliver(released, after_gap=True)
+        pending.remove(released)
 
 
 # =============================================================
@@ -216,11 +136,7 @@ def _counter_for_slot(
 ) -> int:
     """Return the counter belonging to the selected vector-clock slot."""
 
-    return (
-        message.clock.low
-        if slot == "low"
-        else message.clock.high
-    )
+    return message.clock.low if slot == "low" else message.clock.high
 
 
 def _find_counter_conflicts(
@@ -240,6 +156,10 @@ def _find_counter_conflicts(
     counters: dict[tuple[str, int], list[StoredMessage]] = {}
 
     for message in messages:
+        # History gives outgoing messages unique counters; only a peer can
+        # send a conflict, and only incoming messages can time out of one.
+        if message.outgoing:
+            continue
         slot = _sender_slot(
             message,
             my_slot,
@@ -258,11 +178,9 @@ def _find_counter_conflicts(
     conflicts: set[EnvelopeId] = set()
 
     for group in counters.values():
-
         # Multiple messages with the same sender counter
         # constitute a conflict.
         if len(group) > 1:
-
             for message in group:
                 conflicts.add(message.envelope_id)
 
@@ -290,23 +208,11 @@ def _is_ready(
         sender_slot,
     )
 
-    other_counter = (
-        msg.clock.high
-        if sender_slot == "low"
-        else msg.clock.low
-    )
+    other_counter = msg.clock.high if sender_slot == "low" else msg.clock.low
 
-    delivered_this = (
-        delivered_low
-        if sender_slot == "low"
-        else delivered_high
-    )
+    delivered_this = delivered_low if sender_slot == "low" else delivered_high
 
-    delivered_other = (
-        delivered_high
-        if sender_slot == "low"
-        else delivered_low
-    )
+    delivered_other = delivered_high if sender_slot == "low" else delivered_low
 
     # Sender must be the next expected message.
     if counter != delivered_this + 1:
@@ -317,10 +223,7 @@ def _is_ready(
         return False
 
     # The predecessor must already have been displayed.
-    if msg.prev is not None and msg.prev not in delivered:
-        return False
-
-    return True
+    return msg.prev is None or msg.prev in delivered
 
 
 def _order_key(
@@ -348,49 +251,44 @@ def _order_key(
     )
 
 
+def _next_timed_out(
+    pending: list[StoredMessage],
+    now: float,
+    hold_timeout_s: float,
+    my_slot: str,
+    their_slot: str,
+) -> StoredMessage | None:
+    """The held message to release next with a gap marker, if any.
+
+    Only incoming messages time out: an outgoing message depends only on
+    messages this client already has, which are released in turn.
+    """
+    candidates = sorted(
+        (
+            m
+            for m in pending
+            if m.received_at is not None and now - m.received_at >= hold_timeout_s
+        ),
+        key=lambda m: _order_key(m, my_slot, their_slot),
+    )
+    for message in candidates:
+        if not _blocked_by_lower_same_sender(message, pending, my_slot, their_slot):
+            return message
+    return None
+
+
 def _blocked_by_lower_same_sender(
     msg: StoredMessage,
-    all_pending: list[StoredMessage],
-    still_held: set[StoredMessage],
+    pending: list[StoredMessage],
     my_slot: str,
     their_slot: str,
 ) -> bool:
-    """Do not release a higher sender counter before a lower one."""
-
-    sender_slot = _sender_slot(
-        msg,
-        my_slot,
-        their_slot,
+    """Do not release a higher sender counter before a lower held one."""
+    sender_slot = _sender_slot(msg, my_slot, their_slot)
+    counter = _counter_for_slot(msg, sender_slot)
+    return any(
+        other is not msg
+        and _sender_slot(other, my_slot, their_slot) == sender_slot
+        and _counter_for_slot(other, sender_slot) < counter
+        for other in pending
     )
-
-    counter = _counter_for_slot(
-        msg,
-        sender_slot,
-    )
-
-    for other in all_pending:
-
-        if other is msg:
-            continue
-
-        if other not in still_held:
-            continue
-
-        other_slot = _sender_slot(
-            other,
-            my_slot,
-            their_slot,
-        )
-
-        if other_slot != sender_slot:
-            continue
-
-        other_counter = _counter_for_slot(
-            other,
-            sender_slot,
-        )
-
-        if other_counter < counter:
-            return True
-
-    return False
