@@ -51,9 +51,7 @@ class ChatClient:
         self._ttl_s = ttl_s
         self._clock = clock
         self._hold_timeout_s = hold_timeout_s
-        send = send or functools.partial(
-            send_to_three, directory=directory, clock=clock
-        )
+        send = send or functools.partial(send_to_three, directory=directory, clock=clock)
         self.outbox = Outbox(history, send, clock)
         self.receiver = Receiver(history, directory, clock, open_envelope)
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -110,4 +108,3 @@ class ChatClient:
         key = f"recv:{peer}"
         if key not in self._tasks:
             self._tasks[key] = asyncio.create_task(self.receiver.run(peer))
-            
