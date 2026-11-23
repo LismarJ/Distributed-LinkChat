@@ -1,4 +1,4 @@
-"""LinkChat's cryptographic parameters (task C6, step A).
+"""LinkChat's cryptographic parameters (task C6).
 
 Only the choices the libraries ask us to make: the subclasses they leave
 abstract, and thin wrappers that always pass the same parameters, so no caller
@@ -169,4 +169,20 @@ def restore_ratchet(serialized: JSONObject) -> LinkChatDoubleRatchet:
         dos_protection_threshold=MAX_SKIPPED_MESSAGE_KEYS,
         max_num_skipped_message_keys=MAX_SKIPPED_MESSAGE_KEYS,
         aead=_AEAD,
+    )
+
+
+def restore_x3dh_state(serialized: JSONObject) -> tuple[LinkChatX3DH, bool]:
+    """Rebuild an X3DH state saved with `.json`, e.g. after a restart.
+
+    Returns the state and a migration flag: True means the saved format was
+    older and was upgraded on load. The caller should republish the bundle
+    in that case, so relays stop serving the stale one. False on a fresh
+    install or an up-to-date file.
+    """
+    return LinkChatX3DH.from_json(
+        serialized,
+        identity_key_format=X3DH_IDENTITY_KEY_FORMAT,
+        hash_function=X3DH_HASH_FUNCTION,
+        info=X3DH_INFO,
     )

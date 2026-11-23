@@ -2,22 +2,29 @@
 
 The only permanent home of any message. Every public method is one
 transaction, so a client killed at any moment reopens at its last commit.
+
+Schema v3 holds the client's identity (one row: the UserId and the serialized
+X3DH state) and `sessions` (the per-peer ratchet state). `me` is optional, so a
+client can open its database before it has created its identity and read the
+UserId back from the table afterwards.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from linkchat.core.envelope import envelope_id as compute_envelope_id
 from linkchat.core.payload import Clock2, Payload, slot_of
 from linkchat.core.types import EnvelopeId, MailboxId, UserId
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_V1 = """
 CREATE TABLE conversations (
@@ -56,13 +63,32 @@ CREATE TABLE seen (
 );
 """
 
-# ADR-0007: one mailbox per direction. `mailbox_id` was the one we send to.
+# One mailbox per direction. `mailbox_id` was the one we send to.
 _SCHEMA_V2 = """
 ALTER TABLE conversations RENAME COLUMN mailbox_id TO send_mailbox;
 ALTER TABLE conversations ADD COLUMN recv_mailbox TEXT NOT NULL DEFAULT '';
 """
 
-_MIGRATIONS = {1: _SCHEMA_V1, 2: _SCHEMA_V2}
+# A permanent identity, and a home for per-peer ratchet state.
+_SCHEMA_V3 = """
+CREATE TABLE identity (
+    id        INTEGER PRIMARY KEY CHECK (id = 1),
+    user_id   TEXT NOT NULL,
+    x3dh      TEXT NOT NULL
+);
+
+CREATE TABLE sessions (
+    peer             TEXT NOT NULL REFERENCES conversations(peer),
+    session_id       TEXT NOT NULL,
+    ratchet          TEXT NOT NULL,
+    associated_data  BLOB NOT NULL,
+    x3dh_header      BLOB,
+    initiator        TEXT NOT NULL,
+    PRIMARY KEY (peer, session_id)
+);
+"""
+
+_MIGRATIONS = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3}
 
 
 class MessageState(StrEnum):
@@ -74,6 +100,18 @@ class MessageState(StrEnum):
 
 class UnknownConversation(LookupError):
     """A message refers to a peer with no conversation opened yet."""
+
+
+class NoIdentity(RuntimeError):
+    """Asked for `me` before `save_identity` was ever called."""
+
+
+class IdentityConflict(RuntimeError):
+    """This database already belongs to a different user.
+
+    Replacing an identity silently would orphan every session and contact, and
+    make this client a stranger to everyone who knew it. Never by accident.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,14 +146,18 @@ Seal = Callable[[Payload], bytes]
 
 
 class History:
-    def __init__(self, path: str | Path, me: UserId) -> None:
-        self._me = me
+    def __init__(self, path: str | Path, me: UserId | None = None) -> None:
+        self._me: UserId | None = me
         # isolation_level=None: we issue BEGIN/COMMIT ourselves.
         self._conn = sqlite3.connect(str(path), isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._migrate()
+        if self._me is None:
+            loaded = self.load_identity()
+            if loaded is not None:
+                self._me = loaded[0]
 
     def close(self) -> None:
         self._conn.close()
@@ -144,7 +186,46 @@ class History:
 
     @property
     def me(self) -> UserId:
+        if self._me is None:
+            raise NoIdentity(
+                "no identity yet: call save_identity before opening conversations"
+            )
         return self._me
+
+    # -- identity -----------------------------------------------------------
+
+    def save_identity(self, user_id: UserId, x3dh_json: dict[str, Any]) -> None:
+        """Store the client's identity, or update the state of the same one.
+
+        Saving the identity already stored is fine (a future signed-prekey
+        rotation changes the state, not the user). Saving a different one
+        raises `IdentityConflict`, in the same transaction as the check.
+
+        After this call, `me` is available even if the client opened the
+        database without passing it, and the next `History(path)` reads it back.
+        """
+        if self._me is not None and self._me != user_id:
+            raise IdentityConflict(f"this client is {self._me}, not {user_id}")
+        with self._tx() as db:
+            existing = db.execute("SELECT user_id FROM identity WHERE id = 1").fetchone()
+            if existing is not None and existing[0] != user_id:
+                raise IdentityConflict(f"this database already belongs to {existing[0]}")
+            db.execute(
+                "INSERT INTO identity (id, user_id, x3dh) VALUES (1, ?, ?)"
+                " ON CONFLICT(id) DO UPDATE SET"
+                "   x3dh = excluded.x3dh",
+                (user_id, json.dumps(x3dh_json)),
+            )
+        self._me = user_id
+
+    def load_identity(self) -> tuple[UserId, dict[str, Any]] | None:
+        """The stored identity, or None on a fresh install."""
+        row = self._conn.execute(
+            "SELECT user_id, x3dh FROM identity WHERE id = 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return UserId(row[0]), json.loads(row[1])
 
     # -- conversations ------------------------------------------------------
 
@@ -152,7 +233,7 @@ class History:
         self, peer: UserId, *, send_mailbox: MailboxId, recv_mailbox: MailboxId
     ) -> None:
         """Idempotent: opening an existing conversation changes nothing."""
-        slot_of(self._me, peer)  # rejects a conversation with oneself
+        slot_of(self.me, peer)  # rejects a conversation with oneself
         with self._tx() as db:
             db.execute(
                 "INSERT OR IGNORE INTO conversations (peer, send_mailbox, recv_mailbox)"
@@ -185,7 +266,7 @@ class History:
         return row  # type: ignore[no-any-return]
 
     def _clock(self, peer: UserId, mine: int, theirs: int) -> Clock2:
-        if slot_of(self._me, peer) == "low":
+        if slot_of(self.me, peer) == "low":
             return Clock2(low=mine, high=theirs)
         return Clock2(low=theirs, high=mine)
 
@@ -322,7 +403,7 @@ class History:
                     MessageState.RECEIVED.value,
                 ),
             )
-            their_slot = slot_of(peer, self._me)
+            their_slot = slot_of(peer, self.me)
             theirs = payload.clock.low if their_slot == "low" else payload.clock.high
             db.execute(
                 "UPDATE conversations SET peer_count = MAX(peer_count, ?) WHERE peer = ?",
