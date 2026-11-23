@@ -15,8 +15,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 # procps gives pgrep and pkill, which the fault-injection scripts use to kill a
 # relay's worker process from inside its container without killing the node.
-# libsodium is for PyNaCl. The X3DH library will need libxeddsa here too, once
-# ADR-0009's candidate passes verification.
+# libsodium is for PyNaCl. The X3DH library (ADR-0009) needs nothing here: its
+# XEdDSA dependency ships manylinux wheels with the native code inside.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -31,14 +31,15 @@ WORKDIR /app
 # The stub package is installed to pull in the dependencies, then uninstalled.
 # Without that uninstall, pip would see linkchat 0.0.0 already present and skip
 # the real install below, leaving the image running an empty package.
+# The stub sits at src/linkchat because pyproject.toml packages that path.
 COPY pyproject.toml README.md ./
-RUN mkdir -p linkchat \
- && touch linkchat/__init__.py \
+RUN mkdir -p src/linkchat \
+ && touch src/linkchat/__init__.py \
  && pip install . \
  && pip uninstall -y linkchat \
- && rm -rf linkchat
+ && rm -rf src
 
-COPY linkchat ./linkchat
+COPY src ./src
 COPY spike ./spike
 RUN pip install --no-deps .
 
