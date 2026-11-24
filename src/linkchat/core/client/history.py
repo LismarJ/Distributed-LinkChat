@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -139,6 +139,24 @@ class OutboxItem:
     envelope: bytes
     expires_at: float
     attempts: int
+
+
+@dataclass(frozen=True, slots=True)
+class SessionRow:
+    """One cryptographic session as stored in the `sessions` table.
+
+    History stores it without understanding it: the crypto layer exports and
+    restores these (`Sessions.export`, `Sessions.restore`).
+    """
+
+    session_id: str
+    initiator: UserId
+    ratchet: str
+    """The ratchet's `.json`, serialized with `json.dumps`."""
+
+    associated_data: bytes
+    x3dh_header: bytes | None
+    """Identity, ephemeral and signed prekey, 96 bytes; None once answered."""
 
 
 Seal = Callable[[Payload], bytes]
@@ -410,6 +428,55 @@ class History:
                 (theirs, peer),
             )
         return True
+
+    # -- encrypted messages: contract, implement against tests/test_channel.py --
+
+    def next_payload(self, peer: UserId, text: str, *, sent_at: float) -> Payload:
+        """The payload of the next message to `peer`, without storing anything.
+
+        Its clock is the one `queue_sealed` will store: this client's counter
+        plus one, the peer's highest counter seen, and `prev` the last message
+        sent. The caller holds the per-peer lock between the two calls.
+        """
+        raise NotImplementedError("History.next_payload: implement it")
+
+    def queue_sealed(
+        self,
+        peer: UserId,
+        payload: Payload,
+        *,
+        envelope: bytes,
+        expires_at: float,
+        sessions: Sequence[SessionRow],
+    ) -> EnvelopeId:
+        """One transaction: the message (`pending`), its outbox entry, the
+        conversation counters, and the peer's session rows replaced by
+        `sessions`. Either all of it is stored, or none of it.
+
+        Raises:
+            ValueError: `payload.clock` is not the next one (a stale
+                `next_payload`, which the lock should make impossible).
+        """
+        raise NotImplementedError("History.queue_sealed: implement it")
+
+    def commit_opened(
+        self,
+        peer: UserId,
+        eid: EnvelopeId,
+        payload: Payload,
+        *,
+        received_at: float,
+        sessions: Sequence[SessionRow],
+    ) -> bool:
+        """`commit_incoming` and the peer's session rows, in one transaction.
+
+        False, storing nothing at all, if `eid` was already seen.
+        """
+        raise NotImplementedError("History.commit_opened: implement it")
+
+    def load_sessions(self, peer: UserId) -> list[SessionRow]:
+        """The stored session rows for `peer`, in no particular order."""
+        raise NotImplementedError("History.load_sessions: implement it")
 
     def trim_seen(self, older_than: float) -> int:
         """Forget ids past TTL plus a margin: relays can no longer offer them."""
