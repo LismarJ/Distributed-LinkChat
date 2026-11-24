@@ -25,8 +25,21 @@ INBOX = mailbox_for(PEER, ME)
 
 
 def open_plain(peer: UserId, envelope: bytes) -> Payload:
-    """Stand-in for decryption until C6."""
+    """These tests are about reading the relays, so envelopes are in the clear."""
     return decode(unpad_payload(envelope))
+
+
+def plain_accept(history: History, open_envelope=open_plain):
+    """What `SecureChannel.receive` does, minus the cryptography."""
+
+    async def accept(peer: UserId, eid, envelope: bytes, received_at: float) -> bool:
+        if history.is_seen(eid):
+            return False
+        return history.commit_incoming(
+            peer, eid, open_envelope(peer, envelope), received_at
+        )
+
+    return accept
 
 
 def message(cluster: FakeCluster, n: int, text: str = "hola") -> Record:
@@ -60,7 +73,7 @@ def history(tmp_path: Path):
 
 @pytest.fixture
 def receiver(history, cluster) -> Receiver:
-    return Receiver(history, cluster.directory(), cluster.clock, open_plain)
+    return Receiver(history, cluster.directory(), cluster.clock, plain_accept(history))
 
 
 def texts(history: History) -> list[str]:
@@ -138,7 +151,9 @@ async def test_unreadable_envelope_is_not_acked_and_does_not_block(
 
     put(cluster, good, *primaries(INBOX))
     put(cluster, bad, *primaries(INBOX))
-    receiver = Receiver(history, cluster.directory(), cluster.clock, picky_open)
+    receiver = Receiver(
+        history, cluster.directory(), cluster.clock, plain_accept(history, picky_open)
+    )
 
     assert await receiver.receive_once(PEER) == 1
     assert texts(history) == ["hola-1"]

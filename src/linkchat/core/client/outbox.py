@@ -51,6 +51,10 @@ class Outbox:
         self._wake.set()
         return eid
 
+    def notify(self) -> None:
+        """A message was queued elsewhere: try it now rather than at the next due time."""
+        self._wake.set()
+
     async def run_once(self) -> None:
         """One pass over everything due, tried concurrently.
 
