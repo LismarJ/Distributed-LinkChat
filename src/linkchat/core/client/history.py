@@ -163,7 +163,12 @@ class History:
     def __init__(self, path: str | Path, me: UserId | None = None) -> None:
         self._me: UserId | None = me
         # isolation_level=None: we issue BEGIN/COMMIT ourselves.
-        self._conn = sqlite3.connect(str(path), isolation_level=None)
+        # check_same_thread=False: the client may be built in one thread and run
+        # by an event loop in another (a server, a test). It is only ever used
+        # by one event loop at a time, never by two threads at once.
+        self._conn = sqlite3.connect(
+            str(path), isolation_level=None, check_same_thread=False
+        )
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -426,6 +431,13 @@ class History:
         return row[0]  # type: ignore[no-any-return]
 
     # -- receiving ----------------------------------------------------------
+
+    def peer_of(self, eid: EnvelopeId) -> UserId | None:
+        """The conversation a stored message belongs to, or None."""
+        row = self._conn.execute(
+            "SELECT peer FROM messages WHERE envelope_id = ?", (eid,)
+        ).fetchone()
+        return UserId(row[0]) if row is not None else None
 
     def is_seen(self, eid: EnvelopeId) -> bool:
         """Check BEFORE decrypting: a ratchet cannot decrypt the same message twice."""

@@ -35,12 +35,16 @@ class Outbox:
         send: SendFn,
         clock: Clock,
         rng: random.Random | None = None,
+        *,
+        on_change: Callable[[EnvelopeId], None] | None = None,
     ) -> None:
         self._history = history
         self._send = send
         self._clock = clock
         self._rng = rng or random.Random()
         self._wake = asyncio.Event()
+        self._on_change = on_change or (lambda eid: None)
+        """Told when a message becomes `sent` or `not_delivered`."""
 
     def submit(self, peer: UserId, text: str, *, ttl_s: float, seal: Seal) -> EnvelopeId:
         """Queue durably, then nudge the loop. The message starts `pending`."""
@@ -74,6 +78,7 @@ class Outbox:
         now = self._clock.now()
         if now >= item.expires_at:
             self._history.give_up(item.envelope_id)
+            self._on_change(item.envelope_id)
             return
         record = Record(
             mailbox_id=item.mailbox_id,
@@ -89,6 +94,7 @@ class Outbox:
             sent = False
         if sent:
             self._history.confirm_sent(item.envelope_id)
+            self._on_change(item.envelope_id)
         else:
             # From the end of the attempt: a send can take several timeouts.
             retry_at = self._clock.now() + self.backoff(item.attempts)
