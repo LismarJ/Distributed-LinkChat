@@ -1,12 +1,11 @@
-"""The client's local history in SQLite (task C3).
+"""The client's local history in SQLite.
 
 The only permanent home of any message. Every public method is one
 transaction, so a client killed at any moment reopens at its last commit.
 
-Schema v3 holds the client's identity (one row: the UserId and the serialized
-X3DH state) and `sessions` (the per-peer ratchet state). `me` is optional, so a
-client can open its database before it has created its identity and read the
-UserId back from the table afterwards.
+It also holds the client's identity and the per-peer ratchet state. An
+encrypted message and the ratchet state that produced or read it are stored
+in one transaction (`queue_sealed`, `commit_opened`).
 """
 
 from __future__ import annotations
@@ -63,13 +62,13 @@ CREATE TABLE seen (
 );
 """
 
-# One mailbox per direction. `mailbox_id` was the one we send to.
+# One mailbox per direction (ADR-0007). `mailbox_id` was the one we send to.
 _SCHEMA_V2 = """
 ALTER TABLE conversations RENAME COLUMN mailbox_id TO send_mailbox;
 ALTER TABLE conversations ADD COLUMN recv_mailbox TEXT NOT NULL DEFAULT '';
 """
 
-# A permanent identity, and a home for per-peer ratchet state.
+# A permanent identity, and the per-peer ratchet state.
 _SCHEMA_V3 = """
 CREATE TABLE identity (
     id        INTEGER PRIMARY KEY CHECK (id = 1),
@@ -107,10 +106,10 @@ class NoIdentity(RuntimeError):
 
 
 class IdentityConflict(RuntimeError):
-    """This database already belongs to a different user.
+    """A different identity was written over the one already stored.
 
-    Replacing an identity silently would orphan every session and contact, and
-    make this client a stranger to everyone who knew it. Never by accident.
+    It would orphan every session and make this client a stranger to its
+    contacts. There is no legitimate reason, so it is a bug or a tampered file.
     """
 
 
@@ -143,20 +142,17 @@ class OutboxItem:
 
 @dataclass(frozen=True, slots=True)
 class SessionRow:
-    """One cryptographic session as stored in the `sessions` table.
+    """One session as stored. Defined here, not in sessions.py, to avoid a cycle.
 
-    History stores it without understanding it: the crypto layer exports and
-    restores these (`Sessions.export`, `Sessions.restore`).
+    `ratchet` is the ratchet's JSON as text. `x3dh_header` is the three public
+    keys concatenated (ik + ek + spk), or None once answered or if we responded.
     """
 
     session_id: str
     initiator: UserId
     ratchet: str
-    """The ratchet's `.json`, serialized with `json.dumps`."""
-
     associated_data: bytes
     x3dh_header: bytes | None
-    """Identity, ephemeral and signed prekey, 96 bytes; None once answered."""
 
 
 Seal = Callable[[Payload], bytes]
@@ -215,26 +211,27 @@ class History:
     def save_identity(self, user_id: UserId, x3dh_json: dict[str, Any]) -> None:
         """Store the client's identity, or update the state of the same one.
 
-        Saving the identity already stored is fine (a future signed-prekey
-        rotation changes the state, not the user). Saving a different one
-        raises `IdentityConflict`, in the same transaction as the check.
-
-        After this call, `me` is available even if the client opened the
-        database without passing it, and the next `History(path)` reads it back.
+        Raises:
+            IdentityConflict: a different identity is already stored, or this
+                History was opened as someone else.
         """
-        if self._me is not None and self._me != user_id:
-            raise IdentityConflict(f"this client is {self._me}, not {user_id}")
         with self._tx() as db:
-            existing = db.execute("SELECT user_id FROM identity WHERE id = 1").fetchone()
-            if existing is not None and existing[0] != user_id:
-                raise IdentityConflict(f"this database already belongs to {existing[0]}")
+            row = db.execute("SELECT user_id FROM identity WHERE id = 1").fetchone()
+            if row is not None and UserId(row[0]) != user_id:
+                raise IdentityConflict(
+                    f"this database belongs to {row[0]}, not {user_id}"
+                )
+            if self._me is not None and self._me != user_id:
+                raise IdentityConflict(
+                    f"the History was opened as {self._me}, but the identity is {user_id}"
+                )
             db.execute(
                 "INSERT INTO identity (id, user_id, x3dh) VALUES (1, ?, ?)"
-                " ON CONFLICT(id) DO UPDATE SET"
-                "   x3dh = excluded.x3dh",
+                " ON CONFLICT(id) DO UPDATE SET x3dh = excluded.x3dh",
                 (user_id, json.dumps(x3dh_json)),
             )
-        self._me = user_id
+        if self._me is None:
+            self._me = user_id
 
     def load_identity(self) -> tuple[UserId, dict[str, Any]] | None:
         """The stored identity, or None on a fresh install."""
@@ -299,44 +296,91 @@ class History:
         expires_at: float,
         seal: Seal,
     ) -> EnvelopeId:
-        """Record a new message and its outbox entry, before any network call.
+        """Record a message and its outbox entry, sealing it synchronously.
 
-        `seal` runs inside the transaction, so the clock it sees is the one
-        stored. The sealed bytes are kept: a retry resends them unchanged, and
-        the envelope id stays the same.
+        For a `seal` that needs no stored state. Encrypted messages go through
+        `next_payload` and `queue_sealed`, which also store the ratchet.
         """
         with self._tx() as db:
-            mailbox_id, my_count, peer_count, last_sent = self._conversation(db, peer)
-            clock = self._clock(peer, my_count + 1, peer_count)
-            prev = EnvelopeId(last_sent) if last_sent is not None else None
-            payload = Payload(text=text, clock=clock, prev=prev, sent_at=sent_at)
-            envelope = seal(payload)
-            eid = compute_envelope_id(envelope)
+            payload = self._payload(db, peer, text, sent_at)
+            return self._insert_outgoing(db, peer, payload, seal(payload), expires_at)
 
-            db.execute(
-                "INSERT INTO messages (envelope_id, peer, direction, text, clock_low,"
-                " clock_high, prev, sent_at, state)"
-                " VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?)",
-                (
-                    eid,
-                    peer,
-                    text,
-                    clock.low,
-                    clock.high,
-                    prev,
-                    sent_at,
-                    MessageState.PENDING.value,
-                ),
-            )
-            db.execute(
-                "INSERT INTO outbox (envelope_id, mailbox_id, envelope, expires_at,"
-                " next_attempt_at) VALUES (?, ?, ?, ?, ?)",
-                (eid, mailbox_id, envelope, expires_at, sent_at),
-            )
-            db.execute(
-                "UPDATE conversations SET my_count = ?, last_sent_id = ? WHERE peer = ?",
-                (my_count + 1, eid, peer),
-            )
+    def next_payload(self, peer: UserId, text: str, *, sent_at: float) -> Payload:
+        """The payload of the next message to `peer`. Stores nothing.
+
+        The caller encrypts it and passes it to `queue_sealed`, holding the
+        per-peer lock in between.
+        """
+        return self._payload(self._conn, peer, text, sent_at)
+
+    def queue_sealed(
+        self,
+        peer: UserId,
+        payload: Payload,
+        *,
+        envelope: bytes,
+        expires_at: float,
+        sessions: Sequence[SessionRow],
+    ) -> EnvelopeId:
+        """Store the message, its outbox entry and the peer's sessions together.
+
+        A crash before this commits leaves none of them: the ciphertext never
+        left the process and the stored ratchet never advanced.
+
+        Raises:
+            ValueError: `payload` is stale, its clock is not the next one.
+        """
+        with self._tx() as db:
+            expected = self._payload(db, peer, payload.text, payload.sent_at)
+            if payload.clock != expected.clock:
+                raise ValueError(
+                    f"payload clock {payload.clock} is not the next one {expected.clock}"
+                )
+            eid = self._insert_outgoing(db, peer, payload, envelope, expires_at)
+            _write_sessions(db, peer, sessions)
+        return eid
+
+    def _payload(
+        self, db: sqlite3.Connection, peer: UserId, text: str, sent_at: float
+    ) -> Payload:
+        _, my_count, peer_count, last_sent = self._conversation(db, peer)
+        clock = self._clock(peer, my_count + 1, peer_count)
+        prev = EnvelopeId(last_sent) if last_sent is not None else None
+        return Payload(text=text, clock=clock, prev=prev, sent_at=sent_at)
+
+    def _insert_outgoing(
+        self,
+        db: sqlite3.Connection,
+        peer: UserId,
+        payload: Payload,
+        envelope: bytes,
+        expires_at: float,
+    ) -> EnvelopeId:
+        mailbox_id, my_count, _, _ = self._conversation(db, peer)
+        eid = compute_envelope_id(envelope)
+        db.execute(
+            "INSERT INTO messages (envelope_id, peer, direction, text, clock_low,"
+            " clock_high, prev, sent_at, state) VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?)",
+            (
+                eid,
+                peer,
+                payload.text,
+                payload.clock.low,
+                payload.clock.high,
+                payload.prev,
+                payload.sent_at,
+                MessageState.PENDING.value,
+            ),
+        )
+        db.execute(
+            "INSERT INTO outbox (envelope_id, mailbox_id, envelope, expires_at,"
+            " next_attempt_at) VALUES (?, ?, ?, ?, ?)",
+            (eid, mailbox_id, envelope, expires_at, payload.sent_at),
+        )
+        db.execute(
+            "UPDATE conversations SET my_count = ?, last_sent_id = ? WHERE peer = ?",
+            (my_count + 1, eid, peer),
+        )
         return eid
 
     def due_outbox(self, now: float) -> list[OutboxItem]:
@@ -393,71 +437,13 @@ class History:
     def commit_incoming(
         self, peer: UserId, eid: EnvelopeId, payload: Payload, received_at: float
     ) -> bool:
-        """Store a received message. False if it was a duplicate.
+        """Store a received message. False, storing nothing, if already seen.
 
-        Acknowledge to relays only after this returns.
+        Acknowledge to relays only after this returns. Encrypted messages use
+        `commit_opened`, which also stores the ratchet.
         """
         with self._tx() as db:
-            self._conversation(db, peer)  # raises if unknown
-            inserted = db.execute(
-                "INSERT OR IGNORE INTO seen (envelope_id, seen_at) VALUES (?, ?)",
-                (eid, received_at),
-            ).rowcount
-            if inserted == 0:
-                return False
-            db.execute(
-                "INSERT INTO messages (envelope_id, peer, direction, text, clock_low,"
-                " clock_high, prev, sent_at, received_at, state)"
-                " VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    eid,
-                    peer,
-                    payload.text,
-                    payload.clock.low,
-                    payload.clock.high,
-                    payload.prev,
-                    payload.sent_at,
-                    received_at,
-                    MessageState.RECEIVED.value,
-                ),
-            )
-            their_slot = slot_of(peer, self.me)
-            theirs = payload.clock.low if their_slot == "low" else payload.clock.high
-            db.execute(
-                "UPDATE conversations SET peer_count = MAX(peer_count, ?) WHERE peer = ?",
-                (theirs, peer),
-            )
-        return True
-
-    # -- encrypted messages: contract, implement against tests/test_channel.py --
-
-    def next_payload(self, peer: UserId, text: str, *, sent_at: float) -> Payload:
-        """The payload of the next message to `peer`, without storing anything.
-
-        Its clock is the one `queue_sealed` will store: this client's counter
-        plus one, the peer's highest counter seen, and `prev` the last message
-        sent. The caller holds the per-peer lock between the two calls.
-        """
-        raise NotImplementedError("History.next_payload: implement it")
-
-    def queue_sealed(
-        self,
-        peer: UserId,
-        payload: Payload,
-        *,
-        envelope: bytes,
-        expires_at: float,
-        sessions: Sequence[SessionRow],
-    ) -> EnvelopeId:
-        """One transaction: the message (`pending`), its outbox entry, the
-        conversation counters, and the peer's session rows replaced by
-        `sessions`. Either all of it is stored, or none of it.
-
-        Raises:
-            ValueError: `payload.clock` is not the next one (a stale
-                `next_payload`, which the lock should make impossible).
-        """
-        raise NotImplementedError("History.queue_sealed: implement it")
+            return self._insert_incoming(db, peer, eid, payload, received_at)
 
     def commit_opened(
         self,
@@ -468,15 +454,55 @@ class History:
         received_at: float,
         sessions: Sequence[SessionRow],
     ) -> bool:
-        """`commit_incoming` and the peer's session rows, in one transaction.
+        """Store a received message and the peer's sessions together.
 
         False, storing nothing at all, if `eid` was already seen.
         """
-        raise NotImplementedError("History.commit_opened: implement it")
+        with self._tx() as db:
+            if not self._insert_incoming(db, peer, eid, payload, received_at):
+                return False
+            _write_sessions(db, peer, sessions)
+        return True
 
-    def load_sessions(self, peer: UserId) -> list[SessionRow]:
-        """The stored session rows for `peer`, in no particular order."""
-        raise NotImplementedError("History.load_sessions: implement it")
+    def _insert_incoming(
+        self,
+        db: sqlite3.Connection,
+        peer: UserId,
+        eid: EnvelopeId,
+        payload: Payload,
+        received_at: float,
+    ) -> bool:
+        self._conversation(db, peer)  # raises if unknown
+        inserted = db.execute(
+            "INSERT OR IGNORE INTO seen (envelope_id, seen_at) VALUES (?, ?)",
+            (eid, received_at),
+        ).rowcount
+        if inserted == 0:
+            return False
+        db.execute(
+            "INSERT INTO messages (envelope_id, peer, direction, text, clock_low,"
+            " clock_high, prev, sent_at, received_at, state)"
+            " VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?, ?)",
+            (
+                eid,
+                peer,
+                payload.text,
+                payload.clock.low,
+                payload.clock.high,
+                payload.prev,
+                payload.sent_at,
+                received_at,
+                MessageState.RECEIVED.value,
+            ),
+        )
+        theirs = (
+            payload.clock.low if slot_of(peer, self.me) == "low" else payload.clock.high
+        )
+        db.execute(
+            "UPDATE conversations SET peer_count = MAX(peer_count, ?) WHERE peer = ?",
+            (theirs, peer),
+        )
+        return True
 
     def trim_seen(self, older_than: float) -> int:
         """Forget ids past TTL plus a margin: relays can no longer offer them."""
@@ -485,10 +511,30 @@ class History:
                 "DELETE FROM seen WHERE seen_at < ?", (older_than,)
             ).rowcount
 
+    # -- sessions -----------------------------------------------------------
+
+    def load_sessions(self, peer: UserId) -> list[SessionRow]:
+        """Every session stored for `peer`, in session_id order."""
+        rows = self._conn.execute(
+            "SELECT session_id, initiator, ratchet, associated_data, x3dh_header"
+            " FROM sessions WHERE peer = ? ORDER BY session_id",
+            (peer,),
+        ).fetchall()
+        return [
+            SessionRow(
+                session_id=r[0],
+                initiator=UserId(r[1]),
+                ratchet=r[2],
+                associated_data=bytes(r[3]),
+                x3dh_header=bytes(r[4]) if r[4] is not None else None,
+            )
+            for r in rows
+        ]
+
     # -- reading ------------------------------------------------------------
 
     def messages(self, peer: UserId) -> list[StoredMessage]:
-        """In storage order. Display order is task C7."""
+        """In storage order. Display order is `ordering.order_messages`."""
         rows = self._conn.execute(
             "SELECT envelope_id, peer, direction, text, clock_low, clock_high, prev,"
             " sent_at, state, received_at FROM messages WHERE peer = ? ORDER BY rowid",
@@ -508,3 +554,29 @@ class History:
             )
             for r in rows
         ]
+
+
+def _write_sessions(
+    db: sqlite3.Connection, peer: UserId, sessions: Sequence[SessionRow]
+) -> None:
+    """Replace every session for `peer` with `sessions`, in the same transaction.
+
+    DELETE + INSERT, not upsert: a session that was dropped in memory (e.g.
+    because it lost a tie-break and there were too many) must vanish from
+    disk too. Callers always pass the full set.
+    """
+    db.execute("DELETE FROM sessions WHERE peer = ?", (peer,))
+    for row in sessions:
+        db.execute(
+            "INSERT INTO sessions"
+            " (peer, session_id, initiator, ratchet, associated_data, x3dh_header)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                peer,
+                row.session_id,
+                row.initiator,
+                row.ratchet,
+                row.associated_data,
+                row.x3dh_header,
+            ),
+        )

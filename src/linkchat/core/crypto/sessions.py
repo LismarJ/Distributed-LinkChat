@@ -1,7 +1,7 @@
 """Sessions: turning payloads into envelopes for one peer, and back.
 
-Sessions live in memory here. Storing them, and serializing the operations on
-one peer, is `channel.py`'s job, through `export` and `restore`.
+Sessions live in memory here. `export` and `restore` let `channel.py` store
+them with each message and roll memory back when a transaction fails.
 
 What `seal` and `open` have to get right:
 
@@ -36,7 +36,8 @@ Plaintext: `payload.encode`, then `envelope.pad_payload`.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from doubleratchet import (
@@ -55,6 +56,7 @@ from linkchat.core.crypto.suite import (
     LinkChatDoubleRatchet,
     LinkChatX3DH,
     accept_ratchet,
+    restore_ratchet,
     start_ratchet,
 )
 from linkchat.core.crypto.wire import pack, unpack
@@ -64,6 +66,9 @@ from linkchat.core.types import UserId
 
 BundleFetcher = Callable[[UserId], Awaitable[Bundle | None]]
 """In production, `bundle.fetch_bundle` bound to the relay directory."""
+
+_X3DH_SLOT_SIZE = 3 * 32
+"""ik + ek + spk, as stored in SQLite. Never includes a one-time prekey."""
 
 
 class NoBundle(LookupError):
@@ -99,6 +104,29 @@ def _authenticated_data(record: SessionRecord, prefix: bytes) -> bytes:
     return record.associated_data + prefix
 
 
+def _encode_x3dh_header(header: X3DHHeader | None) -> bytes | None:
+    """ik + ek + spk, or None. Reverses `_decode_x3dh_header`."""
+    if header is None:
+        return None
+    return header.identity_key + header.ephemeral_key + header.signed_pre_key
+
+
+def _decode_x3dh_header(data: bytes | None) -> X3DHHeader | None:
+    """Rebuild an X3DH header from its three public keys, or None."""
+    if data is None:
+        return None
+    if len(data) != _X3DH_SLOT_SIZE:
+        raise ValueError(
+            f"stored X3DH header is {len(data)} bytes, expected {_X3DH_SLOT_SIZE}"
+        )
+    return X3DHHeader(
+        identity_key=data[:32],
+        ephemeral_key=data[32:64],
+        signed_pre_key=data[64:],
+        pre_key=None,
+    )
+
+
 class Sessions:
     def __init__(self, me: UserId, identity: LinkChatX3DH, fetch: BundleFetcher) -> None:
         self.me = me
@@ -117,10 +145,8 @@ class Sessions:
         """The session `seal` uses for `peer`: the only one, or the one
         initiated by the smaller UserId.
 
-        Deterministic for any number of sessions, so both sides always agree:
-        first the ones the smaller UserId initiated, then by session id. A
-        normal client holds at most two, with different initiators, but a
-        misbehaving peer must not be able to make `seal` fail.
+        Deterministic for any number of sessions, so both sides always agree,
+        and a misbehaving peer cannot make `seal` fail.
         """
         held = self.sessions_with(peer)
         if not held:
@@ -128,16 +154,40 @@ class Sessions:
         winner_id = min(self.me, peer)
         return min(held, key=lambda r: (r.initiator != winner_id, r.session_id))
 
-    # -- persistence: contract, implement against tests/test_channel.py ------
+    # -- export and restore -------------------------------------------------
 
     def export(self, peer: UserId) -> list[SessionRow]:
-        """The sessions with `peer` in the form History stores."""
-        raise NotImplementedError("Sessions.export: implement it")
+        """Everything in memory for `peer`, ready to commit."""
+        return [
+            SessionRow(
+                session_id=record.session_id,
+                initiator=record.initiator,
+                ratchet=json.dumps(record.ratchet.json),
+                associated_data=record.associated_data,
+                x3dh_header=_encode_x3dh_header(record.x3dh_header),
+            )
+            for record in self.sessions_with(peer)
+        ]
 
-    def restore(self, peer: UserId, rows: Sequence[SessionRow]) -> None:
-        """Replace every session with `peer` by `rows`. Used on start, and to
-        roll back an operation whose transaction did not commit."""
-        raise NotImplementedError("Sessions.restore: implement it")
+    def restore(self, peer: UserId, rows: list[SessionRow]) -> None:
+        """Replace `peer`'s in-memory sessions with `rows`.
+
+        Used at startup to load from SQLite, and after a failed transaction
+        to put the in-memory state back where it was.
+        """
+        if not rows:
+            self._sessions.pop(peer, None)
+            return
+        self._sessions[peer] = {
+            row.session_id: SessionRecord(
+                session_id=row.session_id,
+                initiator=row.initiator,
+                ratchet=restore_ratchet(json.loads(row.ratchet)),
+                associated_data=row.associated_data,
+                x3dh_header=_decode_x3dh_header(row.x3dh_header),
+            )
+            for row in rows
+        }
 
     # -- sealing ------------------------------------------------------------
 
@@ -164,10 +214,11 @@ class Sessions:
         return pack(record.x3dh_header, encrypted)
 
     async def _seal_initial(self, peer: UserId, plaintext: bytes) -> bytes:
-        """First message to `peer`: X3DH as initiator, then the ratchet's
-        initial encryption. The first message goes through
-        `encrypt_initial_message`, not `encrypt_message`, so the peer's
-        `decrypt_initial_message` finds the initial chain key.
+        """First message to `peer`: X3DH as initiator, then `start_ratchet`.
+
+        The first message goes through `encrypt_initial_message`, not
+        `encrypt_message`, so that the peer's `decrypt_initial_message`
+        finds the initial chain key.
         """
         bundle = await self.fetch(peer)
         if bundle is None:
@@ -244,9 +295,6 @@ class Sessions:
     async def _decrypt_with_header(
         self, peer: UserId, unpacked: wire.Unpacked, header: X3DHHeader
     ) -> bytes:
-        # Whoever wrote this envelope claims to be `peer`. Their identity key
-        # must hash to the UserId the invitation gave us, or it is someone
-        # else writing into this mailbox.
         if user_id_of(header.identity_key) != peer:
             raise CannotOpen("the X3DH header is not the peer's")
 
@@ -254,7 +302,6 @@ class Sessions:
         held = self._sessions.get(peer, {})
 
         if session_id in held:
-            # A reordered message from a session we already have.
             record = held[session_id]
             plaintext = await record.ratchet.decrypt_message(
                 unpacked.message,
@@ -262,12 +309,9 @@ class Sessions:
                     record, unpacked.authenticated_prefix
                 ),
             )
-            self._clear_header_after_reply(record)
+            _clear_header_after_reply(record)
             return plaintext
 
-        # A new session from the peer. X3DH as responder, then accept the
-        # ratchet on this very message: it is the first message of the
-        # session, wherever it sits in the sending chain.
         (
             shared_secret,
             associated_data,
@@ -284,7 +328,7 @@ class Sessions:
             initiator=peer,
             ratchet=ratchet,
             associated_data=associated_data,
-            x3dh_header=None,  # the responder never sends a header
+            x3dh_header=None,
         )
         self._sessions.setdefault(peer, {})[session_id] = record
         return plaintext
@@ -296,8 +340,6 @@ class Sessions:
         if not held:
             raise CannotOpen(f"no session with {peer} and no header to start one")
 
-        # Try the sending session first, then the other. The library does not
-        # mutate state on a failed decrypt, so trying both is safe.
         sending = self.sending_session(peer)
         assert sending is not None  # `held` is not empty
         order = [sending] + [r for r in held if r is not sending]
@@ -310,7 +352,7 @@ class Sessions:
                         record, unpacked.authenticated_prefix
                     ),
                 )
-                self._clear_header_after_reply(record)
+                _clear_header_after_reply(record)
                 return plaintext
             except (
                 AuthenticationFailedException,
@@ -324,10 +366,11 @@ class Sessions:
             f"envelope from {peer} opens in none of {len(held)} session(s)"
         ) from last_error
 
-    def _clear_header_after_reply(self, record: SessionRecord) -> None:
-        """The first reply in a session we initiated ends the header ride.
 
-        The responder never sets one, so only our own sessions need this.
-        """
-        if record.initiator == self.me:
-            record.x3dh_header = None
+def _clear_header_after_reply(record: SessionRecord) -> None:
+    """The first reply in a session we initiated ends the header ride.
+
+    The responder never sets one, so only our own sessions need this.
+    """
+    if record.x3dh_header is not None:
+        record.x3dh_header = None

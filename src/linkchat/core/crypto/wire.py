@@ -1,4 +1,4 @@
-"""The envelope on the wire: a fixed binary layout (task C6).
+"""The envelope on the wire: a fixed binary layout.
 
 Every envelope is exactly `ENVELOPE_SIZE` bytes, whether or not it starts a
 session, so its length tells a relay nothing:

@@ -1,4 +1,4 @@
-"""The client core: history, outbox and receivers wired together (task C5).
+"""The client core: history, outbox and receivers wired together.
 
 This is what the FastAPI app (C8) holds. It owns the background tasks:
 `start()` creates them, `stop()` cancels them.

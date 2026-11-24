@@ -1,4 +1,4 @@
-"""LinkChat's cryptographic parameters (task C6).
+"""LinkChat's cryptographic parameters.
 
 Only the choices the libraries ask us to make: the subclasses they leave
 abstract, and thin wrappers that always pass the same parameters, so no caller
