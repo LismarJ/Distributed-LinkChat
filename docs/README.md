@@ -75,6 +75,7 @@ ADRs live in [`decisions/`](decisions/), numbered, in the form *context → opti
 | [0013](decisions/0013-ray-free-core-for-phase-2.md) | Application logic lives in a core that does not import Ray | Accepted |
 
 | [0014](decisions/0014-phase-1-scope-cuts.md) | Phase 1 scope: optional features deferred, and no direct client-to-client path | Accepted |
+| [0015](decisions/0015-how-the-cryptography-is-used.md) | How X3DH and the Double Ratchet are used: no one-time prekeys, bundles bound to the UserId, a fixed 4090-byte envelope, ratchet state stored with each message | Accepted for phase 1 |
 
 Pending: 0006 TTL and expiry behaviour · the access credential (left open by 0007) · 0008 relay interface and envelope format.
 

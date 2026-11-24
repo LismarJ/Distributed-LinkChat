@@ -33,12 +33,31 @@ Inside the encrypted region, so a relay cannot read it. Two bytes is enough
 because `PAYLOAD_SIZE` is well under 65536.
 """
 
-PAYLOAD_SIZE = 3968
+PAYLOAD_SIZE = 3904
 """Every plaintext payload is padded to exactly this before encryption.
 
-Chosen so that the finished envelope fits in `ENVELOPE_BUDGET` with room for a
-ratchet header, a nonce and an authentication tag.
+The largest multiple of 16 for which the finished envelope fits in
+`ENVELOPE_BUDGET`, measured with the cryptography of ADR-0009 (see
+`ENVELOPE_SIZE`). Was 3968 until the library was chosen; that left 128 bytes
+for an overhead that turned out to be 186.
 """
+
+AEAD_BLOCK = 16
+"""AES-CBC pads to a multiple of this, always adding at least one byte."""
+
+AEAD_TAG = 32
+"""HMAC-SHA-256 appended to the ciphertext."""
+
+CIPHERTEXT_SIZE = PAYLOAD_SIZE + AEAD_BLOCK + AEAD_TAG
+"""3952. `PAYLOAD_SIZE` is a multiple of 16, so the padding is one full block."""
+
+ENVELOPE_HEADER_SIZE = 138
+"""Everything in front of the ciphertext: version and flags (2), the X3DH header
+slot (3 x 32) and the ratchet header (32 + 4 + 4). Layout in `crypto/wire.py`.
+"""
+
+ENVELOPE_SIZE = ENVELOPE_HEADER_SIZE + CIPHERTEXT_SIZE
+"""4090: the exact length of every envelope, first message or not."""
 
 MAX_PLAINTEXT = PAYLOAD_SIZE - LENGTH_PREFIX_BYTES
 """The largest payload that fits in one envelope, 3966 bytes.
@@ -57,10 +76,12 @@ matters because an object there dies with the process that created it, and that
 process is the sender (ray-architecture.md section 12). And it bounds relay
 memory: ten thousand undelivered envelopes is about 40 MB.
 
-The exact envelope size becomes a constant once the cryptography library is
-chosen (ADR-0009) and its header and tag sizes are known. Until then this is a
-ceiling that `check_envelope_size` enforces.
+The exact size is now `ENVELOPE_SIZE`; this stays as the ceiling that
+`check_envelope_size` enforces.
 """
+
+if PAYLOAD_SIZE % AEAD_BLOCK or ENVELOPE_SIZE > ENVELOPE_BUDGET:
+    raise AssertionError("envelope constants are inconsistent")  # pragma: no cover
 
 ENVELOPE_ID_BYTES = 32
 """Digest length of an envelope id, before hex encoding."""
@@ -73,8 +94,9 @@ class PayloadTooLarge(ValueError):
 class MalformedEnvelope(ValueError):
     """An envelope or padded block is not the shape this module produces.
 
-    Reaching this means one of our own bugs, not an attack: the envelope is
-    authenticated, so a tampered one fails to decrypt long before it gets here.
+    From our own padding code, it means a bug. From `crypto/wire.py`, it can
+    also mean a relay handed back bytes that are not one of our envelopes,
+    which the receiver drops without acknowledging.
     """
 
 
