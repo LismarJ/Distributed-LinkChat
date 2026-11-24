@@ -1,4 +1,4 @@
-"""C6 step A: the first X3DH + Double Ratchet exchange, and its sizes.
+"""C6: the first X3DH + Double Ratchet exchange, and its sizes.
 
 No relays, no SQLite: only that the libraries, configured as in `suite.py`, do
 what we need. A session with the recipient offline, a reply, a restart, and
