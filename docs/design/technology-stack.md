@@ -59,10 +59,10 @@ Sections 1 to 4 describe phase 1 (due 2026-12-01). Section 5 lists what changes 
 | Envelope | Fixed-size padded `bytes`, passed by value | n/a | Far below Ray's 100 KB inline limit, so it never enters the object store; to confirm in the spike |
 | Payload inside the envelope | **msgpack** | Apache-2.0 | Client-side only, before encryption |
 | Client HTTP/WS server | **FastAPI** + **Uvicorn**, one worker, in the driver process | MIT / BSD | No forking after Ray starts (a documented Ray anti-pattern) |
-| Crypto primitives | **PyNaCl** (libsodium: X25519, Ed25519, XChaCha20-Poly1305, BLAKE2b) | Apache-2.0 *(confirm)* | |
-| KDF and extras | **`cryptography`** (HKDF, AEAD) | Apache-2.0 / BSD *(confirm)* | |
-| X3DH and Double Ratchet | **An adopted library**, not our implementation. First choice `X3DH` + `DoubleRatchet` (Syndace) | *(licence and maintenance to confirm before use)* | [ADR-0009](../decisions/0009-adopt-a-cryptography-library.md). `X3DH` needs the native libraries `libxeddsa` and `libsodium` in the image. Do not use unvetted PyPI ratchet packages |
-| Client persistence | **SQLite** (`aiosqlite`), WAL mode, on a Docker volume | MIT / PSF | Identity, sessions, outbox, seen-set, history |
+| Crypto primitives | **`cryptography`**, through the libraries below; BLAKE2b from the standard library | Apache-2.0 or BSD-3-Clause | PyNaCl is still declared but unused, a candidate for removal ([ADR-0015](../decisions/0015-how-the-cryptography-is-used.md)) |
+| KDF and AEAD | HKDF-SHA-256, HMAC-SHA-256 chains, AES-256-CBC with HMAC-SHA-256, via `cryptography` | Apache-2.0 or BSD-3-Clause | The libraries' recommended recipes ([ADR-0015](../decisions/0015-how-the-cryptography-is-used.md)) |
+| X3DH and Double Ratchet | **`X3DH` 1.3.0** and **`DoubleRatchet` 1.3.0** (Syndace), pinned exactly | MIT | [ADR-0009](../decisions/0009-adopt-a-cryptography-library.md), [ADR-0015](../decisions/0015-how-the-cryptography-is-used.md). Their own suites pass. `XEdDSA` ships manylinux wheels, so the image needs no native library |
+| Client persistence | **SQLite** (standard-library `sqlite3`), WAL mode, on a Docker volume | PSF | Identity, sessions, outbox, seen-set, history. `aiosqlite` is declared but unused |
 | Relay persistence | Actor memory: dict plus `heapq` TTL index | stdlib | No disk and no checkpoint. Durability comes from three copies |
 | Packaging | **`uv`** with a committed `uv.lock` | MIT / Apache-2.0 | |
 | Lint and types | **`ruff`**, **`mypy --strict`** on `linkchat.core`, and a CI check that `core` does not import Ray | MIT | |
@@ -112,8 +112,9 @@ The earlier estimates for bare Python containers (40 to 70 MB of memory each) ap
 ## 6. Open items
 
 1. The spike list in [`../research/07-ray.md`](../research/07-ray.md) section 12.
-2. Which cryptography library, confirmed for licence and maintenance ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md)).
-3. Confirm the licences of PyNaCl, `cryptography` and any ratchet package before the written report cites them.
+2. ~~Which cryptography library~~: settled, see [ADR-0015](../decisions/0015-how-the-cryptography-is-used.md).
+3. ~~Licences~~: confirmed from the installed licence files, listed in ADR-0015.
+4. Remove PyNaCl and `aiosqlite` from `pyproject.toml` if nothing comes to need them.
 
 ## Sources
 
