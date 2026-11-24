@@ -15,6 +15,7 @@ import contextlib
 import functools
 import logging
 
+from linkchat.core.client.events import Event, EventBus
 from linkchat.core.client.history import History
 from linkchat.core.client.mailbox_ids import mailbox_for
 from linkchat.core.client.ordering import (
@@ -68,8 +69,12 @@ class ChatClient:
         self._republish_s = republish_s
 
         send = send or functools.partial(send_to_three, directory=directory, clock=clock)
-        self.outbox = Outbox(history, send, clock)
-        self.receiver = Receiver(history, directory, clock, self._accept)
+        self.events = EventBus()
+        """What the UI subscribes to: a conversation changed, fetch it again."""
+        self.outbox = Outbox(history, send, clock, on_change=self._state_changed)
+        self.receiver = Receiver(
+            history, directory, clock, self._accept, on_new=self._received
+        )
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._started = False
 
@@ -97,6 +102,7 @@ class ChatClient:
         eid = await self.channel.send(
             peer, text, sent_at=now, expires_at=now + self._ttl_s
         )
+        self.events.publish(Event("message", peer, eid))
         self.outbox.notify()
         return eid
 
@@ -139,6 +145,14 @@ class ChatClient:
         self, peer: UserId, eid: EnvelopeId, envelope: bytes, received_at: float
     ) -> bool:
         return await self.channel.receive(peer, eid, envelope, received_at=received_at)
+
+    def _received(self, peer: UserId, eid: EnvelopeId) -> None:
+        self.events.publish(Event("message", peer, eid))
+
+    def _state_changed(self, eid: EnvelopeId) -> None:
+        peer = self.history.peer_of(eid)
+        if peer is not None:
+            self.events.publish(Event("state", peer, eid))
 
     async def _republish(self) -> None:
         """Forever: publish now, then again every `republish_s`. Never dies."""

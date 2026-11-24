@@ -53,6 +53,7 @@ class Receiver:
         *,
         credential: Credential = NO_CREDENTIAL,
         timeout_s: float = FETCH_TIMEOUT_S,
+        on_new: Callable[[UserId, EnvelopeId], None] | None = None,
     ) -> None:
         self._history = history
         self._directory = directory
@@ -61,6 +62,8 @@ class Receiver:
         self._credential = credential
         self._timeout_s = timeout_s
         self._unreadable: set[EnvelopeId] = set()
+        self._on_new = on_new or (lambda peer, eid: None)
+        """Told about each message committed for the first time."""
 
     async def receive_once(self, peer: UserId) -> int:
         """One round for `peer`. Returns how many new messages were committed."""
@@ -86,7 +89,9 @@ class Receiver:
             except Exception as exc:  # unreadable: no ack, it stays until its TTL
                 self._note_unreadable(eid, repr(exc))
                 continue
-            new += fresh
+            if fresh:
+                new += 1
+                self._on_new(peer, eid)
             to_ack.append(eid)  # seen ones too: an earlier ack may have been lost
 
         if to_ack:
