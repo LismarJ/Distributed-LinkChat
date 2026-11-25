@@ -164,7 +164,7 @@ that had been merged to `main` (see the reconciliation spec in
 | R6/R7/R8 orchestration in the actor | Written (`ray_runtime/relay_actor.py`) | The actor now really resyncs before READY, runs a handoff loop, and runs every loop under a supervisor that counts failures and records the last good round in `status` |
 | S5 randomized fault injection | Written (`tests/test_fuzz_two_failures.py`) | 40 seeded scenarios, 24 rounds each. Measured: 405 of 960 rounds ran with two relays simultaneously down, and 820 of 820 confirmed messages were delivered exactly once |
 | C9/C10 browser UI and overlay view | Written (`client_app/static/`, `core/client/overlay.py`) | `tests/test_overlay.py` and the new API tests. [ADR-0016](../decisions/0016-plain-browser-ui-without-a-build-step.md) records why it has no build step |
-| R11 fault-injection scenarios | Written (`scripts/scenario.sh`) | Syntax, `--list`, usage and the preflight failure path only. **The scenarios themselves have never run** |
+| R11 fault-injection scenarios | Written (`scripts/scenario.sh`) | Syntax, `--list`, usage and the preflight failure path only. **The scenarios themselves have never run** — superseded on 2026-11-25: all of them now pass against real containers, see the entry below |
 
 `ruff`, `ruff format`, `mypy --strict` and `pytest` are all green: 469 passed, 20
 skipped. The 20 skips are the `test_history.py` crash-consistency cases, which
@@ -206,6 +206,60 @@ on.
   `FakeClock` the unit tests use and an instant in 1970 under the `SystemClock`
   a real relay reads. The relay correctly refused an already-expired record and
   the test read an empty mailbox. Fixed in the tests, not in the store.
+
+**2026-11-25. A full review of `src/linkchat` found three defects in the graded
+mechanisms.** Six days to delivery. Written up in
+[`../guides/2026-11-25-review-and-durability-fixes.md`](../guides/2026-11-25-review-and-durability-fixes.md);
+the two that matter most, because both make a claim we intended to defend false:
+
+- **Repair could destroy a confirmed message under two failures.** `share_for`
+  handed records to a resyncing primary with the `hint` still set, and
+  `handoff_round` did not skip itself, so a restarted primary handed its own
+  record to itself and then forgot it. When the stand-in was the last holder —
+  exactly the state after two failures — the record was gone. `handoff_round`'s
+  docstring had already identified this hazard and cleared the hint on its own
+  path; the resync path had the same hazard and did not. Now pinned by
+  `test_two_failures_cannot_lose_a_confirmed_message_across_repair`, which ended
+  with `holders == []` before the fix.
+- **`wait_for_mail` never woke.** Ray gives each concurrency group its own
+  asyncio loop in its own thread (measured: different thread *and* loop ids for
+  `client` and `waiters`), and `Event.set()` is neither thread-safe nor
+  cross-loop, so a parked reader was released only by its own timeout and the
+  client then polled anyway. R9's "parked waiters do not block `store`" was
+  true; the parking itself did nothing. Fixed with `loop.call_soon_threadsafe`,
+  and `wait_for_mail` now has tests, which it never had.
+
+`ruff`, `ruff format`, `mypy --strict` and `pytest` are green: **481 passed, 20
+skipped**, and the Ray integration tests are up from 7 to 10. Coverage of
+`src/linkchat` is 90%.
+
+**Later the same day, gate G3 was answered: the container scenarios now run, and
+all of them pass.** Seven of them, because two delivery-checklist items turned
+out to have no scenario at all — item 2 (the recipient's container stopped at
+the time of sending, which every existing scenario had *online*) and item 6
+(every relay wiped, both clients keeping their full history). Both existed in
+the runbook as manual beats; they are now `scripts/scenario.sh recipient-offline`
+and `wipe-all-relays`, which check their own outcome.
+
+Three things measured while there, all of which the demonstration needed:
+
+- **A killed relay container is replaced on a *spare node*** — the half of
+  spike item 1 that needed containers, observed three times. ADR-0011 holds.
+- **Failover takes ~31 s for a container and ~1.3 s for a worker process.**
+  Ray notices a dead worker almost at once and a dead node only through its
+  health check. Thirty seconds is a long silence mid-demonstration, so the
+  runbook now says to start explaining as the kill lands.
+- **The image is 475 MiB**, and its cached dependency layer is keyed on
+  `pyproject.toml` — editing that file forces a ~13 minute Ray re-download.
+  Do not touch it on the day.
+
+**And one finding that matters more than the rest of R11 put together:** a
+scenario that *failed to injure the cluster* used to report `PASS`.
+`kill-nodes.sh` exits 1 rather than kill a container that is already down, and
+that status was ignored. For `wipe-all-relays` this would have been a silent
+false pass, since its assertion is that the histories are unchanged and wiping
+nothing satisfies it. Every `injure_*` function now fails loudly and every
+caller reports `nothing was tested`. Section 7.4 of the guide has the detail.
 
 **The client failure scenario has a limit.** `scripts/scenario.sh client-mid-send`
 waits for the send request to commit before killing the client and a relay. It

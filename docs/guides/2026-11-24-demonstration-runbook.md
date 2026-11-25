@@ -16,17 +16,31 @@ Two people present. One drives the terminal, the other drives the browsers and d
 
 | Check | Command | Expected |
 |---|---|---|
-| The suite is green | `scripts/check.sh` | `all checks passed`; 469 passed, 20 skipped |
+| The suite is green | `scripts/check.sh` | `all checks passed`; 481 passed, 20 skipped |
 | Docker is running | `docker version` | a server version, not a pipe error |
 | The image builds | `scripts/up.sh --build` | ends with `the cluster is up` |
-| The scenarios pass | `scripts/scenario.sh all` | five `PASS` lines in the summary |
+| The scenarios pass | `scripts/scenario.sh all` | seven `PASS` lines in the summary |
 | Clean slate again | `scripts/down.sh` | removes the containers, keeps the volumes |
 
-The 20 skipped tests are the client crash-consistency cases. They need `fork` and `SIGKILL`, so they are skipped on a Windows host and run on Linux. If the defense machine is Linux, expect 489 passed and no skips. Say this if asked rather than letting a grader find a skip and wonder.
+The 20 skipped tests are the client crash-consistency cases. They need `fork` and `SIGKILL`, so they are skipped on a Windows host and run on Linux. If the defense machine is Linux, expect 501 passed and no skips. Say this if asked rather than letting a grader find a skip and wonder.
 
-**Record the resource measurements during rehearsal.** The target setup has ten containers: one head, seven relay nodes and two clients. `--shm-size 1g` per container is already set in `scripts/env.sh` for the Ray object store. Record Docker Desktop peak memory use and the built image size after measuring; do not use estimates as rehearsal results.
+**Record the resource measurements during rehearsal.** The target setup has ten containers: one head, seven relay nodes and two clients. `--shm-size 1g` per container is already set in `scripts/env.sh` for the Ray object store. Record Docker Desktop peak memory use; do not use estimates as rehearsal results. The **image size is measured: 498,384,886 bytes (475 MiB)**.
 
 **Timing.** A cold `--build` is the slow part. Build the night before and never during the defense. Bring-up from a built image takes about 40 seconds.
+
+> **Never edit `pyproject.toml` on the day.** The image's cached dependency
+> layer is keyed on that file, so touching it forces a full re-download of Ray
+> — measured at about 13 minutes on a slow connection. Nothing else in the
+> repository has that effect.
+
+**The two recovery numbers, measured 2026-11-25.** These are what the pacing of beats 3 and 4 depends on, so they are written here rather than left to be discovered on the day:
+
+| What dies | Time until all five relays are READY again |
+|---|---|
+| A relay **container** | **~31 s** (three runs: 30.7, 31.1, 31.1) |
+| A relay **worker process** | **~1.3 s** (two runs: 1.35, 1.26) |
+
+The difference is the whole story and worth saying out loud: Ray notices a dead *worker* almost at once, but a dead *node* only through its health check. **Thirty seconds is a long silence in a demonstration**, so begin the explanation in beat 3 the moment the kill lands rather than waiting for green — the script is polling and prints `PASS` when it is done. Do not let a grader watch a blank pause and conclude something is stuck.
 
 **Record recovery times during rehearsal:** time a killed relay container from docker kill until all relay statuses report READY, then repeat for a killed worker process. Measure both on the demonstration machine.
 
@@ -81,6 +95,14 @@ scripts/up-client.sh 1                 # Bob comes back
 **Watch.** Alice's two messages reach `sent` while Bob is stopped. When Bob's UI reloads, both messages are there, in the order Alice sent them.
 
 **Say.** This is the asynchronous requirement, and it is the reason the relay tier exists at all. Alice's send does not need Bob to be anywhere: it needs three relays. Bob's history is on his own volume, so stopping the container loses nothing. Note that there is **no direct client-to-client path in phase 1, by decision** ([ADR-0014](../decisions/0014-phase-1-scope-cuts.md)): every message goes through relays without exception, which is a property worth claiming rather than an omission.
+
+**The scripted version, if a grader wants it checked rather than shown:**
+
+```bash
+scripts/scenario.sh recipient-offline
+```
+
+It does the same thing and asserts the outcome: the recipient's container is killed, the send happens while it is down, the container comes back, and the message is then there **exactly once** with the sender reading `sent`. Added 2026-11-25, because every other scenario had the recipient online and this is the one requirement the relay tier exists for.
 
 ## Beat 3 — two relay containers, killed together
 
@@ -139,6 +161,16 @@ scripts/bootstrap.sh
 ```
 
 **Watch.** Every relay comes back with zero records. Both UIs still show the entire conversation.
+
+**The scripted version:**
+
+```bash
+scripts/scenario.sh wipe-all-relays
+```
+
+Every relay hosting an actor goes down in **one `docker kill`**, the containers are brought back, and then both clients' histories are compared against what they held before — as whole strings, so loss, duplication *and* reordering all fail the check. Measured at about 43 seconds end to end. Added 2026-11-25.
+
+Worth knowing why the duplication half is not redundant: wiping the relays destroys their **tombstones** as well as their records, so anything that came back would be offered to the client again, and the only thing refusing it is the client's persisted seen-set. This beat therefore tests duplicate suppression too, not just durability.
 
 **Say.** This is requirement R9 and it is **structural, not a promise**. Relays are memory only and hold a record until it is acknowledged or until its TTL expires, whichever comes first, and expiry needs no other process to be alive. The conversation lives in the two clients' SQLite files. So a relay cannot reconstruct a conversation because it cannot be asked to: there is no history operation in the interface at all. `tests/test_fuzz_two_failures.py::test_a_relay_wipe_costs_nothing_the_clients_already_have` is the same claim as a test.
 
