@@ -65,12 +65,22 @@ async def _invoke(
       `RelayUnreachable` — **the call may still have run**, which is safe only
       because every relay operation is idempotent;
     - the actor being dead is `RelayGone`;
+    - a name that does not resolve yet is `RelayUnreachable`. This happens for
+      real: between `ray.kill` and the restart being registered, `ray.get_actor`
+      raises `ValueError`, and during bootstrap a relay may look up a peer that
+      has not been created yet. Resolution is therefore inside the `try`, so a
+      caller never sees a non-`RelayError` from a relay that is merely absent;
     - an application error the relay itself raised (`RelaySyncing`, `MailboxFull`)
       is re-raised unchanged, because it already is one of ours.
     """
-    handle = directory._resolve(name)
     try:
+        handle = directory._resolve(name)
         return await asyncio.wait_for(make_ref(handle), timeout_s)
+    except ValueError as exc:
+        # `ray.get_actor` could not find the name: absent, not yet created, or
+        # mid-restart. Drop any cached handle so the next call re-resolves.
+        directory._forget(name)
+        raise RelayUnreachable(f"{name} does not resolve: {exc}") from exc
     except RelayError:
         # The relay raised one of ours (e.g. RelaySyncing, MailboxFull). Ray
         # re-raises application errors as an instance of their original type, so

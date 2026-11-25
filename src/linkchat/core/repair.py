@@ -24,8 +24,10 @@ The shapes, from `ray-architecture.md` section 6:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .mailbox import MailboxStore
-from .ports import Clock, RelayPeers
+from .ports import Clock, RelayError, RelayPeers
 from .types import RelayName
 
 
@@ -35,17 +37,42 @@ async def resync(
     peers: RelayPeers,
     *,
     clock: Clock,
-) -> None:
+) -> int:
     """Refill `store` from the peers, for every mailbox `this_relay` owns. R6.
 
     Pulls from each reachable peer and `absorb`s the result into `store`. A peer
     that is itself down or syncing is skipped; the guarantee holds as long as one
-    holder of each record answers. Returns once every reachable peer has been
-    asked; the caller (the relay actor) then flips to READY.
+    holder of each record answers.
+
+    **Returns how many peers actually answered**, which the caller needs in order
+    to tell whether this was a sync at all. "Every peer answered and had nothing
+    for us" and "no peer answered" both leave the store empty, so they cannot be
+    told apart from the store alone — yet they mean opposite things. The first is
+    the normal state of a fresh cluster; the second means this relay learned
+    nothing and must not serve clients yet. Only the caller knows how many peers
+    it expected, so the count goes back rather than a verdict.
+
+    Why this is enough to survive two failures. Every acknowledged record sits on
+    three relays, and at most two are down at once, so for any mailbox this relay
+    owns at least one holder is reachable and answers the pull. `pull` asks the
+    peer for exactly what `this_relay` should hold (the peer computes it from the
+    same fixed ring), and `absorb` is idempotent and tombstone-aware, so pulling
+    the same record from two surviving peers stores it once and an acknowledgement
+    that reached a peer as a tombstone suppresses the record rather than resurrecting
+    it. A peer that is itself still syncing answers with whatever it already has,
+    which only ever helps.
     """
-    raise NotImplementedError(
-        "R6: sync on restart. Graded mechanism — implement against tests/test_repair.py."
-    )
+    answered = 0
+    for peer in peers.peer_names:
+        try:
+            result = await peers.pull(peer, this_relay)
+        except RelayError:
+            # Down, gone, or otherwise unreachable: skip it. Another holder of
+            # each record is reachable, so skipping one loses nothing.
+            continue
+        store.absorb(list(result.records), list(result.tombstones))
+        answered += 1
+    return answered
 
 
 async def handoff_round(
@@ -62,7 +89,30 @@ async def handoff_round(
     succeeds, `store.forget_record` each one locally. Returns how many records
     were handed off and dropped. A primary still unreachable is left for the next
     round; the stand-in keeps serving the record meanwhile.
+
+    Two details the fault-tolerance argument rests on. The hint is cleared before
+    handing a record over (`replace(..., hint=None)`): the record is the primary's
+    own now, so leaving the hint set would make the primary think it is standing
+    in for itself and hand the record straight back. And the local copy is dropped
+    with `forget_record`, never a tombstone: the record has *moved*, not been
+    acknowledged, and a tombstone here would stop the primary from ever handing it
+    back if this relay later became a holder. The order — confirm the primary has
+    it, *then* drop ours — means a failure between the two leaves a harmless
+    duplicate, never a gap.
     """
-    raise NotImplementedError(
-        "R7: hinted handoff. Graded mechanism — implement against tests/test_repair.py."
-    )
+    handed = 0
+    for primary in store.hinted_primaries():
+        records = store.hinted_for(primary)
+        if not records:
+            continue
+        payload = [replace(record, hint=None) for record in records]
+        try:
+            await peers.handoff(primary, payload, [])
+        except RelayError:
+            # Primary still unreachable: keep our copies and serve them; the next
+            # round tries again.
+            continue
+        for record in records:
+            if store.forget_record(record.mailbox_id, record.envelope_id):
+                handed += 1
+    return handed

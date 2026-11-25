@@ -221,7 +221,6 @@ async def test_stop_cancels_every_task(tmp_path) -> None:
     assert all(t.done() for t in tasks)
 
 
-@pytest.mark.xfail(reason="R5 not implemented yet; remove once it is", strict=True)
 async def test_exchange_with_two_relays_down(tmp_path) -> None:
     """With the real three-copy send: two relays down, still delivered and `sent`."""
     relays = Relays()

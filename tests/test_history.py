@@ -9,6 +9,7 @@ import signal
 import sqlite3
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -199,10 +200,19 @@ def _check_invariants(path: Path) -> None:
     db.close()
 
 
+@pytest.mark.skipif(
+    "fork" not in multiprocessing.get_all_start_methods(),
+    reason=(
+        "needs os.fork and SIGKILL to kill a writer mid-transaction; Windows has "
+        "neither. The delivered system runs in Linux containers, and CI runs these."
+    ),
+)
 @pytest.mark.parametrize("seed", range(20))
 def test_killed_at_any_point_reopens_consistent(tmp_path: Path, seed: int) -> None:
     path = tmp_path / "client.db"
-    ctx = multiprocessing.get_context("fork")
+    # `Any`: typeshed types this as BaseContext, which declares neither Process
+    # nor Array, and the alternative is an ignore that is unused on Linux.
+    ctx: Any = multiprocessing.get_context("fork")
     done = ctx.Array("i", 2, lock=False)  # only the child writes
     ready = ctx.Event()
     child = ctx.Process(target=_worker, args=(str(path), seed, done, ready))
@@ -211,7 +221,11 @@ def test_killed_at_any_point_reopens_consistent(tmp_path: Path, seed: int) -> No
 
     time.sleep(random.Random(seed).uniform(0.05, 0.3))
     assert child.pid is not None
-    os.kill(child.pid, signal.SIGKILL)
+    # SIGKILL so the child gets no chance to finish a transaction or run an
+    # atexit hook: the point is to crash it exactly as a `docker kill` would.
+    # Looked up dynamically because it does not exist on Windows, where this
+    # test is skipped anyway.
+    os.kill(child.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
     child.join()
 
     _check_invariants(path)

@@ -256,7 +256,6 @@ async def test_run_survives_a_database_error(history, monkeypatch) -> None:
     assert state(history) is MessageState.SENT
 
 
-@pytest.mark.xfail(reason="R5 not implemented yet; remove once it is", strict=True)
 async def test_with_real_three_copy_send(history) -> None:
     cluster = FakeCluster()
     send = functools.partial(
