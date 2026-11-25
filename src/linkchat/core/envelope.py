@@ -60,7 +60,7 @@ ENVELOPE_SIZE = ENVELOPE_HEADER_SIZE + CIPHERTEXT_SIZE
 """4090: the exact length of every envelope, first message or not."""
 
 MAX_PLAINTEXT = PAYLOAD_SIZE - LENGTH_PREFIX_BYTES
-"""The largest payload that fits in one envelope, 3966 bytes.
+"""The largest payload that fits in one envelope, 3902 bytes.
 
 Longer messages are refused rather than split. Phase 1 has no multi-envelope
 message, and the UI enforces this limit before encrypting.
