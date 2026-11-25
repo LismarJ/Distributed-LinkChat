@@ -284,7 +284,7 @@ Ray's documentation lists 8 patterns and 13 anti-patterns. The ones that touch o
 | **Anti-pattern: serializing `ObjectRef`s out of band** | We never send references outside Ray |
 | **Tasks too fine-grained; nested tasks; generators for heap memory** | About batch computation; not relevant to relays |
 
-## 12. What we have not verified and must test in a spike
+## 12. Ray questions and spike findings
 
 In order of how much of the design depends on each:
 
@@ -300,6 +300,31 @@ In order of how much of the design depends on each:
 10. **Token authentication across containers** on the pinned Ray version.
 11. **`ray job submit` from the head container** for the bootstrap script, and that the detached actors it creates survive the job's end.
 12. **`ray.util.metrics`** from inside a relay actor, and where the Prometheus endpoint is exposed.
+
+### 12.1 What the spike has answered so far — 2026-11-24
+
+Measured against a real Ray 2.60 instance, but **on a Windows laptop with all five
+relay actors in one local Ray instance, not in containers**. That distinction
+matters for every item below and is stated again where it bites. The tests live
+in `tests/test_ray_runtime.py` and run in CI, so these answers are re-checked
+rather than recorded once.
+
+| Item | Answer |
+|---|---|
+| 1. Restart after node death | **Partly, and the load-bearing half is confirmed.** `ray.kill(handle, no_restart=False)` on a relay with `max_restarts=-1` does bring the actor back, the replacement runs its constructor again with an **empty** store, and it refills from its peers and serves the record again (`test_restarted_relay_refills_from_peers`). **Not verified:** placement onto a *spare relay node*, which needs containers, and whether an actor stays pending rather than failing when no `relay_slot` is free. No restart *time* measured |
+| 2. Restart after process death | **Not verified.** Needs a container to `kill -9` inside |
+| 3. Handles and names across restarts | **Yes**, `ray.get_actor(name)` returns the restarted actor. With one finding that changed the code: between the kill and the restart being registered, `ray.get_actor` raises **`ValueError`**, not a Ray exception type. The gateway resolved names outside its `try`, so that would have escaped into the core as itself during the two-failure demonstration. Resolution now sits inside the `try` and maps to `RelayUnreachable` |
+| 4. What a caller sees and when | **Partly.** A call to a killed relay does raise one of ours and never a `ray.exceptions` type (`test_dead_relay_becomes_a_relay_error`). **Not measured:** how long it takes, which is the number `DEFAULT_CALL_TIMEOUT_S` should be tuned against. It is still a guess at 5 s |
+| 5. Background loops in an async actor | **Yes.** `async def __init__` is awaited, `asyncio.create_task` from inside it works, and the actor serves calls while those loops run. The actor now starts three that way: resync, the TTL sweeper and the handoff loop. Confirmed too that an exception in such a task does **not** stop the actor, which is why every loop runs under a supervisor that counts failures and records its last good round in `status` |
+| 6. Concurrency groups | **Declared and working** (`client`, `waiters`, `repair`), but **not stress-tested**: that thousands of parked `wait_for_mail` calls cannot starve `store` is still only read, not measured |
+| 7–9. Memory, node count, object store, inline envelopes | **Not verified.** All need containers |
+| 10–12. Token auth, `ray job submit`, `ray.util.metrics` | **Not verified** |
+
+**What this means for gate G1.** The question that could have changed a week of
+work — whether Ray restarts a relay actor at all, and whether a restarted relay
+can be made correct again — is answered yes, so the fallback design of pinned
+relays with `max_restarts=0` is not needed. ADR-0011 stands.
+
 
 ---
 

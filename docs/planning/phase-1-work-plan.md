@@ -26,7 +26,7 @@ Items 3, 4 and 7 are what the examiners added to the brief. They are the ones to
 
 ## 2. Two facts that shape this plan
 
-**The design rests on Ray behaviour we have read about and never run.** Whether a relay restarts on a spare node, how long that takes, what a caller sees meanwhile, and how many Ray nodes fit on the demonstration laptop are all unverified. If the first of those is wrong, [ADR-0011](../decisions/0011-relays-as-ray-supervised-actors.md) changes and so does a week of work. So the spike comes first, before anything is built on top of it.
+**At the start of this plan, the design rested on Ray behaviour we had read about but not run.** The Nov 24 progress entry below records what the local Ray spike has since confirmed and what still needs container measurements. If relay placement onto spare nodes differs from the design, [ADR-0011](../decisions/0011-relays-as-ray-supervised-actors.md) may still need to change.
 
 **The interface between the two tracks is the critical path.** One person can own the relay side and the other the client side, in parallel, only if both agree on `core/ports.py` and the envelope format first. That agreement is the first task of the project and it is a shared one.
 
@@ -152,6 +152,67 @@ actor restart, which exception a caller sees first) get their first real test.
 The core interface this builds on was also reconciled with the thinner version
 that had been merged to `main` (see the reconciliation spec in
 `docs/superpowers/specs/`).
+
+**2026-11-24. The graded mechanisms are implemented, and the gate moves from
+"does the code exist" to "does it run in containers".** Seven days to delivery.
+
+| Task | State | How far it is actually verified |
+|---|---|---|
+| R5 three-copy send with stand-ins | Written (`core/replication.py`) | `tests/test_three_copy_send.py` passes: happy path, two primaries down falling through to hinted stand-ins, three down staying `pending`, idempotent resend |
+| R6 sync on restart | Written (`core/repair.py`) | `tests/test_repair.py`, and `tests/test_ray_runtime.py::test_restarted_relay_refills_from_peers` on a real Ray cluster |
+| R7 hinted handoff | Written (`core/repair.py`) | `tests/test_repair.py`, and `test_handoff_loop_returns_a_hinted_record_to_its_primary` on real Ray |
+| R6/R7/R8 orchestration in the actor | Written (`ray_runtime/relay_actor.py`) | The actor now really resyncs before READY, runs a handoff loop, and runs every loop under a supervisor that counts failures and records the last good round in `status` |
+| S5 randomized fault injection | Written (`tests/test_fuzz_two_failures.py`) | 40 seeded scenarios, 24 rounds each. Measured: 405 of 960 rounds ran with two relays simultaneously down, and 820 of 820 confirmed messages were delivered exactly once |
+| C9/C10 browser UI and overlay view | Written (`client_app/static/`, `core/client/overlay.py`) | `tests/test_overlay.py` and the new API tests. [ADR-0016](../decisions/0016-plain-browser-ui-without-a-build-step.md) records why it has no build step |
+| R11 fault-injection scenarios | Written (`scripts/scenario.sh`) | Syntax, `--list`, usage and the preflight failure path only. **The scenarios themselves have never run** |
+
+`ruff`, `ruff format`, `mypy --strict` and `pytest` are all green: 469 passed, 20
+skipped. The 20 skips are the `test_history.py` crash-consistency cases, which
+need `fork` and `SIGKILL` and are skipped on Windows; they run on CI and in the
+containers, which are Linux.
+
+**The spike's central assumption is confirmed, on a laptop rather than in
+containers.** Ray does restart a relay actor after `ray.kill(..., no_restart=False)`,
+the replacement runs the constructor again with an empty store, and it refills
+from its peers and serves the record again. That is gate G1's load-bearing
+question and the fallback design in the next section is not needed. Two caveats,
+both real: this was measured with five actors in one local Ray instance on
+Windows, not with seven relay containers and two spares on the demonstration
+machine, so *placement onto a spare node* is still unverified; and no restart
+*time* has been measured, which is the number the demonstration's pacing depends
+on.
+
+**Three findings worth keeping.**
+
+- **The fuzz harness was useless until it was tested against a bug.** Its first
+  version passed every seed, and so did a deliberately broken `sent` rule, because
+  the harness healed every relay and drained the backlog before asserting, and
+  because a `kill` in the fake transport preserves the relay's store — only a
+  `restart` wipes it. Rewritten to take two relays out *together*, to prefer
+  wipes over kills, and to let the recipient go offline for stretches so a
+  backlog sits on the relays while they are wiped. It then caught a planted
+  durability bug (dropping a stand-in's copy before the primary confirms the
+  handoff) at seed 21. A fault-injection suite that has never failed is
+  evidence of nothing, and that is the lesson, not the seed.
+- **`ray.get_actor` raises `ValueError`, not a Ray exception, for a name that
+  does not resolve** — which is exactly what happens between killing a relay and
+  its restart being registered. The gateway resolved names *outside* its
+  try block, so that `ValueError` would have escaped to the client as itself
+  rather than as one of ours, in the middle of the two-failure demonstration.
+  Resolution is now inside the try and maps to `RelayUnreachable`.
+- **An integration test can pass for the wrong reason and then fail for a
+  boring one.** Two Ray tests failed because `make_record`'s default
+  `expires_at` is around 1,000,060, which is a future instant under the
+  `FakeClock` the unit tests use and an instant in 1970 under the `SystemClock`
+  a real relay reads. The relay correctly refused an already-expired record and
+  the test read an empty mailbox. Fixed in the tests, not in the store.
+
+**The client failure scenario has a limit.** `scripts/scenario.sh client-mid-send`
+waits for the send request to commit before killing the client and a relay. It
+tests a durably queued send under a simultaneous failure, but does not reliably
+kill the client during its relay call. The outbox and history tests cover retry
+after restart and crash consistency; this scenario does not complete the
+delivery checklist's mid-call crash demonstration by itself.
 
 ### G1 is the one that can change the plan
 
