@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from linkchat.core.client.history import History, MessageState, UnknownConversation
+from linkchat.core.client.mailbox_ids import mailbox_for
 from linkchat.core.envelope import pad_payload
 from linkchat.core.payload import Clock2, Payload, encode
 from linkchat.core.types import EnvelopeId, MailboxId, UserId
@@ -256,4 +257,31 @@ def test_a_version_1_file_migrates_to_two_mailboxes(tmp_path: Path) -> None:
     assert h.peers() == [PEER]
     [item] = h.due_outbox(now=1.0)
     assert item.mailbox_id == "mb-old"  # the old mailbox became send_mailbox
+
+    # The receive mailbox did not exist before ADR-0007, and the v2 migration
+    # can only add the column with an empty default: it cannot fill it, because
+    # the value depends on this client's own id, which is not known until the
+    # identity is loaded (and on a v1 file there is no identity table at all).
+    # So it is derived on first read instead. Without that, a conversation
+    # carried over from v1 would silently never receive again.
+    assert h.recv_mailbox(PEER) == mailbox_for(PEER, ME)
     h.close()
+
+
+def test_a_derived_receive_mailbox_is_written_back(tmp_path: Path) -> None:
+    """Deriving it once persists it, so later reads do not depend on `me`."""
+    path = tmp_path / "derived.db"
+    h = History(path, ME)
+    h.open_conversation(PEER, send_mailbox=MAILBOX, recv_mailbox=INBOX)
+    # Force the pre-ADR-0007 state that a v1 migration leaves behind.
+    with h._tx() as db:
+        db.execute("UPDATE conversations SET recv_mailbox = ''")
+    assert h.recv_mailbox(PEER) == mailbox_for(PEER, ME)
+    h.close()
+
+    conn = sqlite3.connect(path)
+    stored = conn.execute(
+        "SELECT recv_mailbox FROM conversations WHERE peer = ?", (PEER,)
+    ).fetchone()[0]
+    conn.close()
+    assert stored == mailbox_for(PEER, ME)
