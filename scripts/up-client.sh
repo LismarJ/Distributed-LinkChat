@@ -35,5 +35,5 @@ for index in "$@"; do
     --env "LINKCHAT_DATA_DIR=/data" \
     "${IMAGE}" client >/dev/null
 
-  echo "started ${name}; UI will be on http://localhost:${port} once C8 exists"
+  echo "started ${name}; UI on http://localhost:${port}"
 done

@@ -12,7 +12,9 @@ from fastapi.testclient import TestClient
 
 from linkchat.client_app.api import create_app
 from linkchat.core.client.client import ChatClient
+from linkchat.core.constants import RELAY_COUNT
 from linkchat.core.envelope import MAX_PLAINTEXT
+from linkchat.core.ring import primaries
 
 from .test_client import Relays, make_client, two_friends
 
@@ -185,3 +187,78 @@ def test_the_websocket_announces_a_new_message(tmp_path) -> None:
         "peer": bob.me,
         "envelope_id": sent.json()["envelope_id"],
     }
+
+
+# -- the overlay view and the UI (C9, C10) -------------------------------------------
+
+
+async def test_relays_endpoint_marks_the_three_primaries(friends) -> None:
+    alice, bob = friends
+    async with api(alice) as http:
+        response = await http.get("/relays", params={"peer": bob.me})
+
+    assert response.status_code == 200
+    relays = response.json()
+    assert len(relays) == RELAY_COUNT
+    assert [r["rank"] for r in relays] == list(range(RELAY_COUNT))
+    assert [r["holds_mailbox"] for r in relays] == [True, True, True, False, False]
+    assert all(r["state"] == "ready" for r in relays)
+
+
+async def test_relays_endpoint_shows_a_killed_relay_as_unreachable(friends) -> None:
+    alice, bob = friends
+    mailbox = alice.history.send_mailbox(bob.me)
+    victim = primaries(mailbox)[0]
+    alice._directory._cluster.kill(victim)  # the fake cluster behind the directory
+
+    async with api(alice) as http:
+        relays = (await http.get("/relays", params={"peer": bob.me})).json()
+
+    by_name = {r["name"]: r for r in relays}
+    assert by_name[victim]["state"] == "unreachable"
+    assert by_name[victim]["holds_mailbox"]  # still a primary, just absent
+    assert sum(r["state"] == "ready" for r in relays) == RELAY_COUNT - 1
+
+
+async def test_relays_endpoint_without_a_peer_marks_nothing(friends) -> None:
+    alice, _ = friends
+    async with api(alice) as http:
+        relays = (await http.get("/relays")).json()
+
+    assert len(relays) == RELAY_COUNT
+    assert not any(r["holds_mailbox"] for r in relays)
+
+
+async def test_relays_endpoint_refuses_an_unknown_peer(friends) -> None:
+    alice, _ = friends
+    async with api(alice) as http:
+        response = await http.get("/relays", params={"peer": "f" * 64})
+
+    assert response.status_code == 404
+
+
+async def test_the_browser_ui_is_served_and_needs_no_network(friends) -> None:
+    """The UI ships inside the package: no build step, no CDN (ADR-0016)."""
+    alice, _ = friends
+    async with api(alice) as http:
+        page = await http.get("/")
+        script = await http.get("/app.js")
+        style = await http.get("/app.css")
+
+    assert page.status_code == 200
+    assert "LinkChat" in page.text
+    assert script.status_code == 200 and style.status_code == 200
+    # Nothing may be fetched from a third party at runtime.
+    for asset in (page, script, style):
+        assert "//cdn" not in asset.text
+        assert "http://" not in asset.text.replace("http://test", "")
+        assert "https://" not in asset.text
+
+
+async def test_the_api_still_wins_over_the_static_mount(friends) -> None:
+    """The UI is mounted at `/`, so every API route must be matched first."""
+    alice, bob = friends
+    async with api(alice) as http:
+        assert (await http.get("/me")).json() == {"user_id": alice.me}
+        assert (await http.get("/contacts")).status_code == 200
+        assert (await http.get("/conversations/" + bob.me)).status_code == 200

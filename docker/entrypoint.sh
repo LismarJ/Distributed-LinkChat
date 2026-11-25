@@ -60,8 +60,8 @@ case "${role}" in
     if python -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('linkchat.client_app.__main__') else 1)" 2>/dev/null; then
       exec python -m linkchat.client_app "$@"
     fi
-    echo "linkchat: node joined the cluster. The client program is task C8 and" >&2
-    echo "          is not built yet, so this container is only a Ray node." >&2
+    echo "linkchat: node joined the cluster, but linkchat.client_app is missing" >&2
+    echo "          from this image, so this container is only a Ray node." >&2
     exec sleep infinity
     ;;
 
@@ -86,7 +86,7 @@ linkchat <role>
 
   head     Ray head node: cluster directory and dashboard. Never killed.
   relay    A relay node: one relay_slot of capacity for a relay actor.
-  client   A client node, plus the client program when it exists (task C8).
+  client   A client node, plus the client program and its browser UI.
   spike    A relay node, then the spike harness (docs/research/07-ray.md s.12).
   shell    An interactive shell in the image.
 

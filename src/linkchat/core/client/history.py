@@ -273,6 +273,20 @@ class History:
             raise UnknownConversation(peer)
         return MailboxId(row[0])
 
+    def send_mailbox(self, peer: UserId) -> MailboxId:
+        """The mailbox this client writes to for `peer`.
+
+        Read from the conversation rather than recomputed with `mailbox_for`,
+        because a database migrated from schema v1 kept its single pre-ADR-0007
+        mailbox as the send mailbox, and that value is not derivable.
+        """
+        row = self._conn.execute(
+            "SELECT send_mailbox FROM conversations WHERE peer = ?", (peer,)
+        ).fetchone()
+        if row is None:
+            raise UnknownConversation(peer)
+        return MailboxId(row[0])
+
     def _conversation(
         self, db: sqlite3.Connection, peer: UserId
     ) -> tuple[str, int, int, str | None]:

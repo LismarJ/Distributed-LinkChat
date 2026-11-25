@@ -32,7 +32,13 @@ auth_token
 
 # Frontend
 node_modules/
-src/linkchat/client_app/static/
+# NOTE: src/linkchat/client_app/static/ was ignored here until 2026-11-24, back
+# when the UI was going to be a Vite build and that directory would have held
+# generated output. It now holds hand-written source (ADR-0016), so it must be
+# tracked. Ignoring it had two consequences worth remembering: the files were
+# missing from the repository, and hatchling honours this file when it builds
+# the wheel, so `pip install .` shipped a client with no UI at all and the
+# container served nothing. Do not re-add it.
 
 # Editors and OS
 .DS_Store

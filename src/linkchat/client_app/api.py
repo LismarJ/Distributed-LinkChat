@@ -12,11 +12,14 @@ stale view until the next one, never a wrong one.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from linkchat.core.client.client import ChatClient
@@ -26,6 +29,11 @@ from linkchat.core.types import UserId
 
 _USER_ID = re.compile(r"^[0-9a-f]{64}$")
 """A UserId: BLAKE2b-256 of an identity key, in lowercase hex."""
+
+log = logging.getLogger(__name__)
+
+STATIC_DIR = Path(__file__).parent / "static"
+"""The browser UI, shipped inside the package so the image needs no build step."""
 
 
 class NewContact(BaseModel):
@@ -49,6 +57,20 @@ class MessageView(BaseModel):
 class ConversationView(BaseModel):
     peer: str
     messages: list[MessageView]
+
+
+class RelayStatusView(BaseModel):
+    name: str
+    state: str
+    """`ready`, `syncing`, or `unreachable`."""
+
+    records: int
+    tombstones: int
+    hinted_records: int
+    holds_mailbox: bool
+    """One of the three primaries of this conversation's send mailbox."""
+
+    rank: int
 
 
 def create_app(client: ChatClient, *, run_client: bool = True) -> FastAPI:
@@ -126,6 +148,26 @@ def create_app(client: ChatClient, *, run_client: bool = True) -> FastAPI:
             ],
         )
 
+    @app.get("/relays")
+    async def relays(peer: str | None = None) -> list[RelayStatusView]:
+        """The overlay view (C10). With `?peer=`, focused on that conversation.
+
+        Never fails because a relay is down: that is the state it exists to show.
+        """
+        target = known_peer(peer) if peer else None
+        return [
+            RelayStatusView(
+                name=view.name,
+                state=view.state,
+                records=view.records,
+                tombstones=view.tombstones,
+                hinted_records=view.hinted_records,
+                holds_mailbox=view.holds_mailbox,
+                rank=view.rank,
+            )
+            for view in await client.relays(target)
+        ]
+
     @app.websocket("/ws")
     async def events(socket: WebSocket) -> None:
         """Pushes `{"kind", "peer", "envelope_id"}` whenever a conversation changes."""
@@ -145,5 +187,25 @@ def create_app(client: ChatClient, *, run_client: bool = True) -> FastAPI:
             pass
         finally:
             client.events.unsubscribe(queue)
+
+    # The browser UI (C9, C10), mounted last so every route above wins over it.
+    # One directory of static files with no build step and no network at runtime
+    # (ADR-0016); `html=True` serves index.html at `/`.
+    #
+    # The missing-UI case is logged at ERROR rather than passed over, because it
+    # is invisible otherwise and the way it happens is a packaging mistake, not a
+    # coding one: the directory was once listed in `.gitignore`, which hatchling
+    # honours, so `pip install .` produced a client whose API worked perfectly
+    # and which served no UI at all. That is worth shouting about at startup
+    # instead of discovering it in front of the examiners.
+    if STATIC_DIR.is_dir():
+        app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
+    else:
+        log.error(
+            "no browser UI at %s: the API will work and / will 404. The static "
+            "files are part of the package, so this means they were excluded "
+            "from the build (check .gitignore and .dockerignore).",
+            STATIC_DIR,
+        )
 
     return app

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LinkChat</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <h1>LinkChat</h1>
+  <div class="me">
+    <span class="label">this client</span>
+    <code id="me" title="Click to copy">…</code>
+  </div>
+  <div id="link" class="link" aria-live="polite"></div>
+</header>
+
+<main>
+  <!-- Contacts -->
+  <section class="pane contacts">
+    <h2>Conversations</h2>
+    <ul id="contacts"></ul>
+    <form id="add" autocomplete="off">
+      <label for="peer">Invite a contact</label>
+      <input id="peer" name="peer" placeholder="their 64-hex user id" spellcheck="false">
+      <button type="submit">Add</button>
+      <p id="add-error" class="error"></p>
+    </form>
+  </section>
+
+  <!-- Conversation -->
+  <section class="pane chat">
+    <h2 id="chat-title">No conversation selected</h2>
+    <ol id="messages" aria-live="polite"></ol>
+    <form id="send" autocomplete="off">
+      <input id="text" name="text" placeholder="Write a message…" spellcheck="false" disabled>
+      <button type="submit" disabled>Send</button>
+    </form>
+    <p id="send-error" class="error"></p>
+  </section>
+
+  <!-- Overlay view (C10) -->
+  <section class="pane overlay">
+    <h2>Relay tier</h2>
+    <p class="hint">In preference order for this conversation. The first three
+      are the primaries that must hold each message.</p>
+    <ul id="relays"></ul>
+    <dl class="legend">
+      <dt><i class="dot ready"></i></dt><dd>ready</dd>
+      <dt><i class="dot syncing"></i></dt><dd>syncing</dd>
+      <dt><i class="dot unreachable"></i></dt><dd>unreachable</dd>
+    </dl>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

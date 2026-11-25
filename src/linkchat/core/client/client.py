@@ -24,6 +24,7 @@ from linkchat.core.client.ordering import (
     order_messages,
 )
 from linkchat.core.client.outbox import Outbox, SendFn
+from linkchat.core.client.overlay import RelayView, overlay
 from linkchat.core.client.receiver import Receiver
 from linkchat.core.crypto.bundle import encode_bundle, fetch_bundle, publish_bundle
 from linkchat.core.crypto.channel import SecureChannel
@@ -110,6 +111,16 @@ class ChatClient:
         """Publish this client's bundle on every relay. Returns how many confirmed."""
         bundle = encode_bundle(self.identity.bundle)
         return await publish_bundle(self._directory, self.me, bundle)
+
+    async def relays(self, peer: UserId | None = None) -> list[RelayView]:
+        """The overlay view (C10). With `peer`, focused on that conversation.
+
+        Focused means: in the preference order of the mailbox this client writes
+        to for `peer`, with the three primaries marked. That is what makes the
+        replication visible while relays are being killed.
+        """
+        mailbox = self.history.send_mailbox(peer) if peer is not None else None
+        return await overlay(self._directory, mailbox=mailbox)
 
     def ordered_messages(
         self, peer: UserId, *, now: float | None = None
