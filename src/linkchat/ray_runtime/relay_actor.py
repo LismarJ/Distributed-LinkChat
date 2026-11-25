@@ -392,18 +392,34 @@ class RelayActor:
         expected = len(peers.peer_names)
         for attempt in range(1, MAX_RESYNC_ATTEMPTS + 1):
             try:
-                answered = await resync(self._name, self._store, peers, clock=self._clock)
-                if answered > 0 or expected == 0:
+                outcome = await resync(self._name, self._store, peers, clock=self._clock)
+                if outcome.complete or expected == 0:
                     self._loops_last_ok["resync"] = self._clock.now()
                     self._state = RelayState.READY
                     return
-                log.warning(
-                    "%s: sync attempt %d/%d reached none of its %d peers; retrying",
-                    self._name,
-                    attempt,
-                    MAX_RESYNC_ATTEMPTS,
-                    expected,
-                )
+                if outcome.records_refused:
+                    # The peers answered, but this store would not take
+                    # everything they hold for us: it is full. Going READY here
+                    # is the one case the docstring above rules out, so retry
+                    # and let the TTL sweeper make room. If it never does, the
+                    # attempt limit restarts the relay rather than leaving a
+                    # healthy-looking relay that is short of records.
+                    log.warning(
+                        "%s: sync attempt %d/%d refused %d record(s): store full; "
+                        "retrying",
+                        self._name,
+                        attempt,
+                        MAX_RESYNC_ATTEMPTS,
+                        outcome.records_refused,
+                    )
+                else:
+                    log.warning(
+                        "%s: sync attempt %d/%d reached none of its %d peers; retrying",
+                        self._name,
+                        attempt,
+                        MAX_RESYNC_ATTEMPTS,
+                        expected,
+                    )
             except Exception:
                 # `resync` swallows per-peer RelayErrors, so reaching here means a
                 # bug or a Ray-level surprise. Either way it is not a reason to

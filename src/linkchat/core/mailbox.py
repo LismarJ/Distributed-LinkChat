@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import heapq
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from .constants import RELAY_NAMES
@@ -317,6 +317,18 @@ class MailboxStore:
 
         Includes records this relay is holding as a stand-in, because a
         stand-in is often the only copy a restarted primary can get.
+
+        **The hint is cleared on the way out,** for the same reason
+        `repair.handoff_round` clears it on the copy it hands over. Every record
+        returned here belongs to a mailbox `relay` is a primary of, so it is
+        `relay`'s own record, and a hint is only ever a stand-in's note to hand
+        something back. Handing a primary its own record still marked as
+        someone else's makes its handoff loop hand that record away and
+        `forget_record` it. When the hint names `relay` itself, that is a
+        self-handoff followed by a forget of the very copy just absorbed — and
+        if the stand-in was the last holder, which is exactly the situation
+        after two failures, the record is destroyed. Our own copy keeps its
+        hint; only the outgoing one is stripped.
         """
         now = self._clock.now()
         records: list[Record] = []
@@ -325,11 +337,32 @@ class MailboxStore:
         for mailbox_id, mailbox in self._mailboxes.items():
             if not is_primary(relay, mailbox_id):
                 continue
-            records.extend(r for r in mailbox.records.values() if r.expires_at > now)
+            records.extend(
+                replace(r, hint=None)
+                for r in mailbox.records.values()
+                if r.expires_at > now
+            )
             tombstones.extend(
                 t for t in mailbox.tombstones.values() if t.expires_at > now
             )
         return records, tombstones
+
+    def clear_hint(self, mailbox_id: MailboxId, envelope_id: EnvelopeId) -> bool:
+        """Keep a record, but stop treating it as held for someone else.
+
+        For a record hinted at *this* relay, which is a record we are a primary
+        of and should hold as our own. The handoff loop calls this instead of
+        handing the record over, so that it stops rescanning it every round.
+        Returns whether a hint was actually cleared.
+        """
+        mailbox = self._mailboxes.get(mailbox_id)
+        if mailbox is None:
+            return False
+        record = mailbox.records.get(envelope_id)
+        if record is None or record.hint is None:
+            return False
+        mailbox.records[envelope_id] = replace(record, hint=None)
+        return True
 
     def hinted_for(self, primary: RelayName) -> list[Record]:
         """Records we are holding on behalf of `primary`, to hand back."""
