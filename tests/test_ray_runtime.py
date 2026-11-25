@@ -196,6 +196,82 @@ async def test_handoff_loop_returns_a_hinted_record_to_its_primary(ray_cluster):
         raise AssertionError("the hinted record never reached its primary")
 
 
+# -- the parked call (wait_for_mail) ----------------------------------------
+#
+# `wait_for_mail` had no test, which is worth saying plainly: it is the one
+# mechanism here that holds server-side state per caller, so it is the one that
+# can leak. These cover the three behaviours the client depends on, and the
+# second is a regression test for a real defect — the actor used to drop its
+# `asyncio.Event` only when the event was *set*, so a reader that timed out left
+# its mailbox id behind for the life of the relay, and the next reader of that
+# mailbox inherited the stale event and was told `True` with no mail behind it.
+
+
+async def test_wait_for_mail_returns_at_once_when_mail_is_already_there(ray_cluster):
+    directory = RayRelayDirectory()
+    mailbox = MailboxId("mailbox-wait-present")
+    gateway = directory.gateway(primaries(mailbox)[0])
+    await _wait_ready(gateway)
+
+    record = make_record(
+        mailbox=str(mailbox), body=b"already-here", expires_at=time.time() + 3600
+    )
+    await gateway.store(record)
+
+    assert await gateway.wait_for_mail(mailbox, CREDENTIAL, 5.0) is True
+    await gateway.ack(mailbox, CREDENTIAL, [record.envelope_id])
+
+
+async def test_wait_for_mail_times_out_and_leaves_nothing_behind(ray_cluster):
+    """A second wait on the same empty mailbox must also time out.
+
+    If the first waiter left its event behind, the second would find it and
+    return `True` immediately — reporting mail that does not exist. Two waits
+    in a row is the cheapest way to see that from outside the actor.
+    """
+    directory = RayRelayDirectory()
+    mailbox = MailboxId("mailbox-wait-timeout")
+    gateway = directory.gateway(primaries(mailbox)[0])
+    await _wait_ready(gateway)
+
+    assert await gateway.wait_for_mail(mailbox, CREDENTIAL, 0.2) is False
+    assert await gateway.wait_for_mail(mailbox, CREDENTIAL, 0.2) is False
+
+
+async def test_a_store_wakes_a_parked_reader(ray_cluster):
+    """The point of the whole mechanism: no polling.
+
+    The reader parks while the mailbox is empty, and a later `store` releases
+    it. Parking first and storing second is the ordering that matters; the
+    other way round is the test above.
+    """
+    directory = RayRelayDirectory()
+    mailbox = MailboxId("mailbox-wait-woken")
+    primary = primaries(mailbox)[0]
+    gateway = directory.gateway(primary)
+    await _wait_ready(gateway)
+
+    parked = asyncio.create_task(gateway.wait_for_mail(mailbox, CREDENTIAL, 15.0))
+    await asyncio.sleep(0.5)  # let the call reach the actor and park
+    assert not parked.done()
+
+    record = make_record(
+        mailbox=str(mailbox), body=b"wake-up", expires_at=time.time() + 3600
+    )
+    await gateway.store(record)
+
+    assert await asyncio.wait_for(parked, 10.0) is True
+    await gateway.ack(mailbox, CREDENTIAL, [record.envelope_id])
+
+
+# -- destructive: keep this LAST -----------------------------------------
+#
+# `ray_cluster` is module scoped, and this test kills relay-4 with
+# `no_restart=True`, so every test after it would run against a cluster
+# permanently short one relay and pass or fail on where its mailbox happens
+# to hash. Anything added to this file goes above this line.
+
+
 async def test_dead_relay_becomes_a_relay_error(ray_cluster):
     """Killing a relay makes the next call raise one of ours, not a Ray type."""
     directory = RayRelayDirectory()
