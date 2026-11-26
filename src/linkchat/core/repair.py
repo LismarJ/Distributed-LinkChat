@@ -25,10 +25,34 @@ The shapes, from `ray-architecture.md` section 6:
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import NamedTuple
 
 from .mailbox import MailboxStore
 from .ports import Clock, RelayError, RelayPeers
 from .types import RelayName
+
+
+class SyncOutcome(NamedTuple):
+    """What one pass of `resync` achieved.
+
+    Two numbers rather than one, because "nothing came back" has two opposite
+    meanings and only the caller can tell them apart (see `resync`).
+    """
+
+    peers_answered: int
+    """How many peers replied. Zero means this relay learned nothing at all."""
+
+    records_refused: int
+    """Records a peer offered that the store would not take, i.e. it is full.
+
+    Non-zero means the sync was incomplete: the relay is missing records it is
+    a primary of and must not start serving clients.
+    """
+
+    @property
+    def complete(self) -> bool:
+        """Whether this counts as a sync that actually happened."""
+        return self.peers_answered > 0 and self.records_refused == 0
 
 
 async def resync(
@@ -37,15 +61,16 @@ async def resync(
     peers: RelayPeers,
     *,
     clock: Clock,
-) -> int:
+) -> SyncOutcome:
     """Refill `store` from the peers, for every mailbox `this_relay` owns. R6.
 
     Pulls from each reachable peer and `absorb`s the result into `store`. A peer
     that is itself down or syncing is skipped; the guarantee holds as long as one
     holder of each record answers.
 
-    **Returns how many peers actually answered**, which the caller needs in order
-    to tell whether this was a sync at all. "Every peer answered and had nothing
+    **Returns how many peers actually answered, and how many records the store
+    refused**, which is what the caller needs in order to tell whether this was
+    a sync at all. "Every peer answered and had nothing
     for us" and "no peer answered" both leave the store empty, so they cannot be
     told apart from the store alone — yet they mean opposite things. The first is
     the normal state of a fresh cluster; the second means this relay learned
@@ -63,6 +88,7 @@ async def resync(
     which only ever helps.
     """
     answered = 0
+    refused = 0
     for peer in peers.peer_names:
         try:
             result = await peers.pull(peer, this_relay)
@@ -70,9 +96,25 @@ async def resync(
             # Down, gone, or otherwise unreachable: skip it. Another holder of
             # each record is reachable, so skipping one loses nothing.
             continue
-        store.absorb(list(result.records), list(result.tombstones))
+        records = list(result.records)
+        store.absorb(records, list(result.tombstones))
         answered += 1
-    return answered
+        # A record the peer sent that we are now neither holding nor
+        # suppressing was refused, and the only remaining reason is a full
+        # store. `absorb` reports "newly held", which cannot tell that apart
+        # from "already had it", so the store is asked directly. Counting it
+        # matters because the caller must not call an incomplete sync a sync:
+        # a relay that goes READY short of records looks healthy, is not
+        # counted as one of the two tolerated failures, and so silently voids
+        # the read-correctness argument instead of visibly breaking it.
+        refused += sum(
+            1
+            for record in records
+            if not store.has(record.mailbox_id, record.envelope_id)
+            and not store.is_tombstoned(record.mailbox_id, record.envelope_id)
+            and record.expires_at > clock.now()
+        )
+    return SyncOutcome(peers_answered=answered, records_refused=refused)
 
 
 async def handoff_round(
@@ -102,6 +144,18 @@ async def handoff_round(
     """
     handed = 0
     for primary in store.hinted_primaries():
+        if primary == this_relay:
+            # Never hand a record to ourselves. `forget_record` is only safe
+            # once a *different* relay has confirmed it holds the record; a
+            # self-handoff confirms nothing, because the absorb and the forget
+            # hit the same store under the same `envelope_id`, so the forget
+            # deletes exactly what the absorb stored. If the stand-in we
+            # absorbed from was the last other holder, the record is gone. A
+            # hint naming us is a record we are a primary of and should simply
+            # keep, so clear the hint rather than act on it.
+            for record in store.hinted_for(primary):
+                store.clear_hint(record.mailbox_id, record.envelope_id)
+            continue
         records = store.hinted_for(primary)
         if not records:
             continue

@@ -53,7 +53,9 @@ addopts = "-q --strict-markers"
 [tool.ruff]
 line-length = 90
 target-version = "py311"
-extend-exclude = ["spike", "docs"]  # spike: throwaway prototype; docs: keep samples as written
+# spike: throwaway prototype. docs and .claude: prose with code samples that are
+# kept as written, not formatted as if they were our source.
+extend-exclude = ["spike", "docs", ".claude"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ASYNC", "TID"]

@@ -34,6 +34,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 import ray
 
@@ -95,12 +96,36 @@ peer failure and few enough to surface a real bug during a demonstration.
 """
 
 
+@dataclass
+class _MailWaiters:
+    """The readers parked on one mailbox, and the event that releases them.
+
+    One event is shared by every reader of a mailbox, so `parked` is what tells
+    the last one to leave to remove the entry. Without the count, a reader that
+    timed out would leave the mailbox id behind for the life of the relay.
+
+    `loop` is the event loop the readers are parked on, and it is why this is a
+    class rather than a bare `asyncio.Event`. Ray gives each concurrency group
+    its own asyncio loop in its own thread (measured: `client` and `waiters`
+    report different thread ids and different loop ids). A reader parks on the
+    `waiters` loop while the `store` that should release it runs on the
+    `client` loop, and `Event.set()` is neither thread-safe nor cross-loop: it
+    queues the waiter's callback on the parked loop without waking it, so the
+    reader sleeps until its own timeout instead of being released. Waking has
+    to go through `loop.call_soon_threadsafe`, which is what this field is for.
+    """
+
+    event: asyncio.Event
+    loop: asyncio.AbstractEventLoop
+    parked: int = 0
+
+
 @ray.remote(
     num_cpus=0,
     resources={"relay_slot": 1},
     max_restarts=-1,
     max_task_retries=2,
-    concurrency_groups={"client": 256, "waiters": 1000, "repair": 16},
+    concurrency_groups={"client": 256, "waiters": 1000, "repair": 16, "report": 16},
 )
 class RelayActor:
     """One logical relay: `relay-0` .. `relay-(R-1)`.
@@ -135,7 +160,7 @@ class RelayActor:
 
         # One event per mailbox with a parked reader. `store`/`handoff` set it to
         # wake the parked `wait_for_mail` without polling (the "waiters" group).
-        self._waiters: dict[MailboxId, asyncio.Event] = {}
+        self._waiters: dict[MailboxId, _MailWaiters] = {}
 
         # Loop name -> clock time it last completed a round. A loop that dies
         # silently (an unhandled exception in a task does not stop the actor)
@@ -221,16 +246,28 @@ class RelayActor:
         self._require_ready()
         if self._store.fetch(mailbox_id):
             return True
-        event = self._waiters.setdefault(mailbox_id, asyncio.Event())
+
+        waiters = self._waiters.get(mailbox_id)
+        if waiters is None:
+            waiters = _MailWaiters(asyncio.Event(), asyncio.get_running_loop())
+            self._waiters[mailbox_id] = waiters
+        waiters.parked += 1
         try:
-            await asyncio.wait_for(event.wait(), timeout_s)
+            await asyncio.wait_for(waiters.event.wait(), timeout_s)
             return True
         except TimeoutError:
             return False
         finally:
-            # Drop the event if nobody else is still waiting on it.
-            if mailbox_id in self._waiters and self._waiters[mailbox_id].is_set():
-                self._waiters.pop(mailbox_id, None)
+            # Drop the entry once the last reader of this mailbox has left,
+            # whether it was woken or timed out. Counting is what makes the
+            # timeout path clean up: a timed-out reader leaves the event unset,
+            # so a rule keyed on `is_set()` would keep the entry — and its
+            # mailbox id — for every mailbox ever waited on, for the life of
+            # the relay. `_wake` removes the entry itself, so the identity
+            # check stops us deleting a newer group of readers' event.
+            waiters.parked -= 1
+            if waiters.parked == 0 and self._waiters.get(mailbox_id) is waiters:
+                del self._waiters[mailbox_id]
 
     # -- relay-to-relay (concurrency group "repair") ------------------------
 
@@ -258,14 +295,21 @@ class RelayActor:
         """Periodic digest comparison. Deferred from phase 1 (ADR-0014, R10)."""
         raise NotImplementedError("digest comparison is deferred from phase 1 (R10)")
 
-    # -- reporting (default group) ------------------------------------------
+    # -- reporting (concurrency group "report") -----------------------------
 
-    @ray.method(concurrency_group="repair")
+    @ray.method(concurrency_group="report")
     async def status(self) -> RelayStatus:
         """This relay's state and counters. Never raises `RelaySyncing`.
 
         Counts only: a relay must put no mailbox id or envelope content in
         anything that leaves it, because Ray forwards worker logs to the head.
+
+        **Its own concurrency group, not `repair`.** The overlay gives a status
+        call `OVERLAY_TIMEOUT_S` (2 s) and paints a relay that misses it as
+        `unreachable`. `repair` has 16 slots and is exactly what saturates while
+        relays resync and hand records back — which is during the two-failure
+        demonstration, when the overlay is being watched. Sharing the group
+        would let a busy but perfectly healthy relay be shown as dead.
         """
         counts = self._store.counts()
         return RelayStatus(
@@ -286,9 +330,20 @@ class RelayActor:
             raise RelaySyncing(f"{self._name} is still syncing")
 
     def _wake(self, mailbox_id: MailboxId) -> None:
-        event = self._waiters.get(mailbox_id)
-        if event is not None:
-            event.set()
+        """Release every reader parked on this mailbox.
+
+        The entry is removed as it is woken, so a reader that parks *after* this
+        never finds an already-set event and get an immediate, spurious `True`
+        with no mail behind it. Readers already awaiting this event still wake:
+        they hold the object, not the dictionary slot.
+        """
+        waiters = self._waiters.pop(mailbox_id, None)
+        if waiters is None:
+            return
+        # Across loops, so `call_soon_threadsafe`: it wakes the parked loop as
+        # well as queueing the work. A plain `event.set()` from this loop would
+        # leave the readers asleep until their own timeout.
+        waiters.loop.call_soon_threadsafe(waiters.event.set)
 
     def _peers(self) -> RelayPeers:
         """This relay's view of the others, built on first use.
@@ -337,18 +392,34 @@ class RelayActor:
         expected = len(peers.peer_names)
         for attempt in range(1, MAX_RESYNC_ATTEMPTS + 1):
             try:
-                answered = await resync(self._name, self._store, peers, clock=self._clock)
-                if answered > 0 or expected == 0:
+                outcome = await resync(self._name, self._store, peers, clock=self._clock)
+                if outcome.complete or expected == 0:
                     self._loops_last_ok["resync"] = self._clock.now()
                     self._state = RelayState.READY
                     return
-                log.warning(
-                    "%s: sync attempt %d/%d reached none of its %d peers; retrying",
-                    self._name,
-                    attempt,
-                    MAX_RESYNC_ATTEMPTS,
-                    expected,
-                )
+                if outcome.records_refused:
+                    # The peers answered, but this store would not take
+                    # everything they hold for us: it is full. Going READY here
+                    # is the one case the docstring above rules out, so retry
+                    # and let the TTL sweeper make room. If it never does, the
+                    # attempt limit restarts the relay rather than leaving a
+                    # healthy-looking relay that is short of records.
+                    log.warning(
+                        "%s: sync attempt %d/%d refused %d record(s): store full; "
+                        "retrying",
+                        self._name,
+                        attempt,
+                        MAX_RESYNC_ATTEMPTS,
+                        outcome.records_refused,
+                    )
+                else:
+                    log.warning(
+                        "%s: sync attempt %d/%d reached none of its %d peers; retrying",
+                        self._name,
+                        attempt,
+                        MAX_RESYNC_ATTEMPTS,
+                        expected,
+                    )
             except Exception:
                 # `resync` swallows per-peer RelayErrors, so reaching here means a
                 # bug or a Ray-level surprise. Either way it is not a reason to

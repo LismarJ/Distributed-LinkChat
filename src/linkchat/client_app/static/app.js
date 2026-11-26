@@ -272,14 +272,20 @@ $("send").addEventListener("submit", async (event) => {
   await refreshConversation();
 });
 
+let copyTimer = 0;
+
 $("me").addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(state.me);
     const node = $("me");
-    const original = node.textContent;
+    // Restore from `state.me`, not from what is on screen: a second click
+    // while "copied" is still showing would otherwise capture "copied" as the
+    // original and leave it there until the page reloads, hiding the id. The
+    // pending timer is cleared for the same reason.
+    clearTimeout(copyTimer);
     node.textContent = "copied";
-    setTimeout(() => {
-      node.textContent = original;
+    copyTimer = setTimeout(() => {
+      node.textContent = state.me;
     }, 900);
   } catch (_) {
     /* no clipboard permission: the id is on screen anyway */

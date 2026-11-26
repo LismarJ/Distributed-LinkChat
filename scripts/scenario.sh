@@ -32,7 +32,18 @@ set -euo pipefail
 source "$(dirname "$0")/env.sh"
 require_docker
 
-SCENARIOS=(two-nodes two-processes one-of-each send-while-down client-mid-send)
+# `wipe-all-relays` is last on purpose: it is the only one that takes every
+# relay out at once, so it is both the slowest to heal and the one that leaves
+# the cluster furthest from where it started.
+SCENARIOS=(
+  two-nodes
+  two-processes
+  one-of-each
+  send-while-down
+  client-mid-send
+  recipient-offline
+  wipe-all-relays
+)
 
 SENDER_INDEX="${LINKCHAT_SENDER_INDEX:-0}"
 RECIPIENT_INDEX="${LINKCHAT_RECIPIENT_INDEX:-1}"
@@ -56,6 +67,11 @@ usage: $(basename "$0") <scenario>
   one-of-each      kill one relay container and one relay process together
   send-while-down  kill two relays first, then send through the stand-ins
   client-mid-send  kill the sending client and a relay while a send is in flight
+  recipient-offline
+                   stop the recipient's container, send to it while it is down,
+                   then bring it back and check it collects its mail
+  wipe-all-relays  take every relay out at once and check both clients still
+                   have their full history
   all              every scenario above, in order, with a summary
 
   --list           print the scenario names, one per line
@@ -72,6 +88,11 @@ client_port() { echo $((CLIENT_BASE_PORT + $1)); }
 
 note() { echo "  - $*"; }
 fail() { echo "FAIL ${SCENARIO}: $*" >&2; return 1; }
+
+# How many lines a history string holds. An empty string is zero messages, not
+# one, which `wc -l` alone would get wrong for a single unterminated line and
+# `grep -c ''` gets right for both.
+count_lines() { [ -z "$1" ] && echo 0 || printf '%s\n' "$1" | grep -c ''; }
 
 # One HTTP call to a client's API. Short timeouts: a client we just killed must
 # report as unreachable quickly rather than hanging the scenario.
@@ -224,12 +245,26 @@ all_relays_ready() {
 # ---------------------------------------------------------------------------
 
 # Kill two relay containers in ONE docker call, so they die together.
+#
+# Every injure_* function returns non-zero if it did not actually injure the
+# cluster, and every caller treats that as a failed scenario. That is not
+# defensive habit, it is a bug that happened: `kill-nodes.sh` refuses to kill a
+# container that is already down and exits 1, and because its status was
+# ignored the scenario carried on against an uninjured cluster. For a
+# send-and-assert scenario that merely produced a confusing failure later, but
+# for `wipe-all-relays` — whose assertion is "both histories are unchanged" —
+# wiping nothing would have satisfied the assertion and printed PASS. A
+# scenario that cannot break the cluster must never report success.
 injure_two_nodes() {
   local -a hosts
   mapfile -t hosts < <(containers_with_actors)
+  if [ "${#hosts[@]}" -lt 2 ]; then
+    echo "need two relay containers with actors, found ${#hosts[@]}" >&2
+    return 1
+  fi
   KILLED_CONTAINERS=("${hosts[0]}" "${hosts[1]}")
   note "killing containers together: ${KILLED_CONTAINERS[*]}"
-  "$(dirname "$0")/kill-nodes.sh" "${KILLED_CONTAINERS[@]}" >/dev/null
+  "$(dirname "$0")/kill-nodes.sh" "${KILLED_CONTAINERS[@]}" >/dev/null || return 1
 }
 
 # Kill two relay worker processes, leaving their containers up. Ray restarts the
@@ -238,23 +273,42 @@ injure_two_nodes() {
 injure_two_processes() {
   local -a hosts
   mapfile -t hosts < <(containers_with_actors)
+  if [ "${#hosts[@]}" -lt 2 ]; then
+    echo "need two relays with actors, found ${#hosts[@]}" >&2
+    return 1
+  fi
   note "killing actor processes together: ${hosts[0]} ${hosts[1]}"
   # Issued back to back with nothing awaited between them: as simultaneous as
   # two `docker exec` calls can be, and both land well inside one Ray health
   # check interval.
-  docker exec "${hosts[0]}" pkill -9 -f "${ACTOR_PATTERN}" &
-  docker exec "${hosts[1]}" pkill -9 -f "${ACTOR_PATTERN}" &
-  wait
+  #
+  # Each job is waited on by pid rather than with a bare `wait`, which reports
+  # only the last job's status. `pkill` exits non-zero when it matched nothing,
+  # and "there was no actor process to kill" is exactly the case that must fail
+  # the scenario rather than pass quietly.
+  local pid_a pid_b rc=0
+  docker exec "${hosts[0]}" pkill -9 -f "${ACTOR_PATTERN}" & pid_a=$!
+  docker exec "${hosts[1]}" pkill -9 -f "${ACTOR_PATTERN}" & pid_b=$!
+  wait "${pid_a}" || rc=1
+  wait "${pid_b}" || rc=1
+  return "${rc}"
 }
 
 injure_one_of_each() {
   local -a hosts
   mapfile -t hosts < <(containers_with_actors)
+  if [ "${#hosts[@]}" -lt 2 ]; then
+    echo "need two relays with actors, found ${#hosts[@]}" >&2
+    return 1
+  fi
   KILLED_CONTAINERS=("${hosts[0]}")
   note "killing container ${hosts[0]} and actor process in ${hosts[1]}"
-  docker kill "${hosts[0]}" >/dev/null &
-  docker exec "${hosts[1]}" pkill -9 -f "${ACTOR_PATTERN}" &
-  wait
+  local pid_a pid_b rc=0
+  docker kill "${hosts[0]}" >/dev/null & pid_a=$!
+  docker exec "${hosts[1]}" pkill -9 -f "${ACTOR_PATTERN}" & pid_b=$!
+  wait "${pid_a}" || rc=1
+  wait "${pid_b}" || rc=1
+  return "${rc}"
 }
 
 # Bring back whatever was killed. Processes need nothing: Ray restarts the actor
@@ -292,6 +346,64 @@ heal() {
 # Running one scenario
 # ---------------------------------------------------------------------------
 
+# Delivery checklist item 6: every relay can be wiped and both clients still
+# have their full history.
+#
+# This has a different shape from every other scenario, which is why it gets its
+# own function rather than a branch. The others send a message and assert it
+# survives; here, wiping *all five* relays is outside the fault model, so a
+# message still sitting on the relays would legitimately be lost and asserting
+# otherwise would be wrong. What is being demonstrated is the opposite and
+# stronger claim: history does not live on the relays at all. It is each
+# client's own SQLite, and the relay interface has no history operation to ask
+# for old mail even if someone wanted to.
+#
+# The assertion compares the two histories as whole strings, which catches loss,
+# duplication and reordering in one comparison. Duplication is the interesting
+# one: wiping the relays destroys their tombstones too, so anything that came
+# back would be re-offered to the client -- and the client's persisted seen-set
+# is what refuses it. That makes this a test of duplicate suppression as well.
+run_wipe_all_relays() {
+  local recv_before send_before recv_after send_after
+  recv_before="$(texts_of "${RECIPIENT_INDEX}" "${SENDER_ID}")"
+  send_before="$(texts_of "${SENDER_INDEX}" "${RECIPIENT_ID}")"
+  note "recipient holds $(count_lines "${recv_before}") message(s), sender holds $(count_lines "${send_before}")"
+
+  local -a hosts
+  mapfile -t hosts < <(containers_with_actors)
+  if [ "${#hosts[@]}" -eq 0 ]; then
+    fail "no relay actors found to wipe"
+    return 1
+  fi
+  note "wiping every relay at once: ${hosts[*]}"
+  KILLED_CONTAINERS=("${hosts[@]}")
+  # Checked, because this scenario's assertion is that the histories did *not*
+  # change: a wipe that silently did nothing would satisfy it and print PASS.
+  if ! "$(dirname "$0")/kill-nodes.sh" "${hosts[@]}" >/dev/null; then
+    heal
+    fail "could not wipe the relays; nothing was tested"
+    return 1
+  fi
+
+  heal  # restarts every container and waits for all five relays to be READY
+
+  recv_after="$(texts_of "${RECIPIENT_INDEX}" "${SENDER_ID}")"
+  send_after="$(texts_of "${SENDER_INDEX}" "${RECIPIENT_ID}")"
+
+  if [ "${recv_before}" != "${recv_after}" ]; then
+    fail "the recipient's history changed: $(count_lines "${recv_before}") message(s) became $(count_lines "${recv_after}")"
+    return 1
+  fi
+  if [ "${send_before}" != "${send_after}" ]; then
+    fail "the sender's history changed: $(count_lines "${send_before}") message(s) became $(count_lines "${send_after}")"
+    return 1
+  fi
+  note "both histories are identical after every relay was wiped"
+
+  echo "PASS ${SCENARIO}"
+  return 0
+}
+
 run_scenario() {
   SCENARIO="$1"
   KILLED_CONTAINERS=()
@@ -299,6 +411,11 @@ run_scenario() {
 
   echo
   echo "=== ${SCENARIO} ==="
+
+  if [ "${SCENARIO}" = "wipe-all-relays" ]; then
+    run_wipe_all_relays
+    return $?
+  fi
 
   # A nonce in the text so a repeat run is distinguishable from the last one,
   # and so "exactly one copy" is a question about this run only.
@@ -350,6 +467,32 @@ run_scenario() {
       wait_until "sender answering" 90 http GET "$(client_port "${SENDER_INDEX}")" /me ||
         { heal; fail "the sender never came back"; return 1; }
       ;;
+    recipient-offline)
+      # Delivery checklist item 2, which no other scenario covers: every one of
+      # them has the recipient online and polling. This is the feature the whole
+      # relay tier exists for -- a message reaching someone whose container is
+      # not running at the time it is sent -- so it is worth a scenario of its
+      # own rather than being assumed from the unit tests.
+      #
+      # Note what is *not* being tested: the sender still reaches `sent` here,
+      # because `sent` means three relays confirmed, which has nothing to do
+      # with the recipient being up. That is the point of the state and the
+      # assertion below checks it.
+      local recipient_container
+      recipient_container="$(client_name "${RECIPIENT_INDEX}")"
+      note "stopping ${recipient_container}, then sending while it is down"
+      docker kill "${recipient_container}" >/dev/null
+      KILLED_CLIENTS=("${recipient_container}")
+      http POST "$(client_port "${SENDER_INDEX}")" \
+        "/conversations/${RECIPIENT_ID}/messages" "{\"text\":\"${text}\"}" >/dev/null
+      note "sent while the recipient was down: ${text}"
+      note "restarting ${recipient_container} so it can collect its mail"
+      "$(dirname "$0")/up-client.sh" "${RECIPIENT_INDEX}" >/dev/null
+      KILLED_CLIENTS=()
+      wait_until "the recipient answering" 90 \
+        http GET "$(client_port "${RECIPIENT_INDEX}")" /me ||
+        { heal; fail "the recipient never came back"; return 1; }
+      ;;
     send-while-down)
       # The other scenarios kill relays *after* a message is confirmed, which
       # tests that a confirmed record survives. This one is the opposite and
@@ -358,7 +501,8 @@ run_scenario() {
       # confirmations (task R5). Nothing is waited for between the kill and the
       # send, so the send lands inside the window where the two replacements are
       # still restarting and resyncing.
-      injure_two_nodes
+      injure_two_nodes ||
+        { heal; fail "could not take two relays down; nothing was tested"; return 1; }
       note "sending with two relays down: ${text}"
       http POST "$(client_port "${SENDER_INDEX}")" \
         "/conversations/${RECIPIENT_ID}/messages" "{\"text\":\"${text}\"}" >/dev/null
@@ -367,11 +511,17 @@ run_scenario() {
       note "sending: ${text}"
       http POST "$(client_port "${SENDER_INDEX}")" \
         "/conversations/${RECIPIENT_ID}/messages" "{\"text\":\"${text}\"}" >/dev/null
+      local injured=0
       case "${SCENARIO}" in
-        two-nodes)     injure_two_nodes ;;
-        two-processes) injure_two_processes ;;
-        one-of-each)   injure_one_of_each ;;
+        two-nodes)     injure_two_nodes     || injured=1 ;;
+        two-processes) injure_two_processes  || injured=1 ;;
+        one-of-each)   injure_one_of_each    || injured=1 ;;
       esac
+      if [ "${injured}" -ne 0 ]; then
+        heal
+        fail "could not injure the cluster; nothing was tested"
+        return 1
+      fi
       ;;
   esac
 

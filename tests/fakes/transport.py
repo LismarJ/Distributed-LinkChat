@@ -87,9 +87,6 @@ class FaultController:
         self.duplicate: set[RelayName] = set()
         """Relays that apply every write twice (tests idempotence)."""
 
-    def is_down(self, relay: RelayName) -> bool:
-        return relay in self.killed or relay in self.gone
-
 
 class FakeCluster:
     """Five relays in one process, with a fault controller and a manual clock.

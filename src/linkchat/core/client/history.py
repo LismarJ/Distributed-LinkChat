@@ -19,6 +19,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from linkchat.core.client.mailbox_ids import mailbox_for
 from linkchat.core.envelope import envelope_id as compute_envelope_id
 from linkchat.core.payload import Clock2, Payload, slot_of
 from linkchat.core.types import EnvelopeId, MailboxId, UserId
@@ -266,12 +267,33 @@ class History:
         return [UserId(r[0]) for r in rows]
 
     def recv_mailbox(self, peer: UserId) -> MailboxId:
+        """The mailbox `peer` writes to for this client.
+
+        Derived and written back if it is missing, which happens exactly once
+        per conversation carried over from schema v1. The v2 migration can only
+        add the column with an empty default: unlike `send_mailbox`, which kept
+        the single pre-ADR-0007 mailbox and is not derivable, this one *is*
+        derivable — but only from this client's own id, which the migration
+        cannot see (the identity is loaded after `_migrate`, and a v1 file has
+        no identity table at all). Repairing it on first read is what keeps a
+        v1-era conversation able to receive, instead of it silently polling the
+        empty mailbox id for ever.
+        """
         row = self._conn.execute(
             "SELECT recv_mailbox FROM conversations WHERE peer = ?", (peer,)
         ).fetchone()
         if row is None:
             raise UnknownConversation(peer)
-        return MailboxId(row[0])
+        if row[0]:
+            return MailboxId(row[0])
+
+        derived = mailbox_for(peer, self.me)
+        with self._tx() as db:
+            db.execute(
+                "UPDATE conversations SET recv_mailbox = ? WHERE peer = ?",
+                (derived, peer),
+            )
+        return derived
 
     def send_mailbox(self, peer: UserId) -> MailboxId:
         """The mailbox this client writes to for `peer`.
