@@ -209,8 +209,12 @@ on.
 
 **2026-11-25. A full review of `src/linkchat` found three defects in the graded
 mechanisms.** Six days to delivery. Written up in
-[`../guides/2026-11-25-review-and-durability-fixes.md`](../guides/2026-11-25-review-and-durability-fixes.md);
-the two that matter most, because both make a claim we intended to defend false:
+[`../guides/2026-11-25-review-and-durability-fixes.md`](../guides/2026-11-25-review-and-durability-fixes.md)
+(the technical detail) and
+[`../guides/2026-11-25-commit-series-walkthrough.md`](../guides/2026-11-25-commit-series-walkthrough.md)
+(a plain-language, commit-by-commit tour of the same fixes, for whoever
+reviews the branch); the two that matter most, because both make a claim we
+intended to defend false:
 
 - **Repair could destroy a confirmed message under two failures.** `share_for`
   handed records to a resyncing primary with the `hint` still set, and
