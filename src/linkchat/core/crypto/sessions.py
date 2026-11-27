@@ -51,6 +51,7 @@ from x3dh import Header as X3DHHeader
 
 from linkchat.core.client.history import SessionRow
 from linkchat.core.crypto import wire
+from linkchat.core.crypto.bundle import NoRelayAnswered
 from linkchat.core.crypto.identity import user_id_of
 from linkchat.core.crypto.suite import (
     LinkChatDoubleRatchet,
@@ -73,6 +74,15 @@ _X3DH_SLOT_SIZE = 3 * 32
 
 class NoBundle(LookupError):
     """No relay has a valid bundle for the peer, so no session can start."""
+
+
+class RelaysUnavailable(NoBundle):
+    """No relay answered, so whether the peer has a bundle is unknown.
+
+    A `NoBundle`, so callers that only need "no session can start" are
+    unchanged; callers that tell the user why can catch it first, because this
+    one passes with time while a missing bundle needs the peer to come online.
+    """
 
 
 class CannotOpen(ValueError):
@@ -220,7 +230,10 @@ class Sessions:
         `encrypt_message`, so that the peer's `decrypt_initial_message`
         finds the initial chain key.
         """
-        bundle = await self.fetch(peer)
+        try:
+            bundle = await self.fetch(peer)
+        except NoRelayAnswered as exc:
+            raise RelaysUnavailable(f"no relay answered for {peer}") from exc
         if bundle is None:
             raise NoBundle(f"no bundle for {peer}")
 
