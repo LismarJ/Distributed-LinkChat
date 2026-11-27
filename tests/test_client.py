@@ -15,13 +15,14 @@ from linkchat.core.client.history import History, MessageState
 from linkchat.core.client.mailbox_ids import mailbox_for
 from linkchat.core.clock import SystemClock
 from linkchat.core.constants import RELAY_NAMES
+from linkchat.core.crypto.acks import identity_signer, sign_ack
 from linkchat.core.crypto.sessions import NoBundle, RelaysUnavailable
 from linkchat.core.envelope import ENVELOPE_SIZE, envelope_id
 from linkchat.core.payload import Clock2, Payload
-from linkchat.core.ports import Record
+from linkchat.core.ports import CredentialRejected, Record
 from linkchat.core.replication import SendResult, send_to_three
 from linkchat.core.ring import primaries
-from linkchat.core.types import RelayName
+from linkchat.core.types import Credential, RelayName
 
 from .fakes.transport import FakeCluster
 
@@ -257,6 +258,30 @@ async def test_mallory_cannot_write_as_alice(tmp_path) -> None:
     assert texts(bob, alice.me) == []
     first = primaries(mailbox)[0]
     assert relays.cluster.stores[first].has(mailbox, record.envelope_id)  # not acked
+
+
+async def test_mallory_knows_both_ids_but_cannot_delete_bobs_mail(tmp_path) -> None:
+    """The attack ADR-0007 left open: compute the mailbox, then ack it early."""
+    relays = Relays()
+    alice, bob = await two_friends(tmp_path, relays)
+    mallory = make_client(tmp_path / "mallory.db", relays)
+    await alice.send(bob.me, "for Bob only")
+    await alice.outbox.run_once()
+    mailbox = mailbox_for(alice.me, bob.me)  # public: both ids are enough
+    eids = [record.envelope_id for record in relays.stored]
+    forged = sign_ack(identity_signer(mallory.identity), alice.me, mailbox, eids)
+
+    for name in primaries(mailbox):
+        with pytest.raises(CredentialRejected):
+            await relays.cluster.directory().gateway(name).ack(mailbox, forged, eids)
+
+    assert await bob.receiver.receive_once(alice.me) == 1
+    assert texts(bob, alice.me) == ["for Bob only"]
+    for name in primaries(mailbox):  # and Bob's own, signed ack did clear it
+        assert (
+            await relays.cluster.directory().gateway(name).fetch(mailbox, Credential(b""))
+            == []
+        )
 
 
 # -- lifecycle ---------------------------------------------------------------
