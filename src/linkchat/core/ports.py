@@ -226,6 +226,10 @@ class RelayGateway(Protocol):
         Idempotent. Acknowledging something already gone succeeds. The caller
         must have committed the messages to its own storage first, so that a
         crash between the two loses nothing.
+
+        Raises `CredentialRejected` unless `credential` is the mailbox
+        recipient's signature over these ids (`core.crypto.acks`): a mailbox id
+        is computable by anyone who knows both user ids, so it proves nothing.
         """
         ...
 

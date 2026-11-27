@@ -78,8 +78,9 @@ ADRs live in [`decisions/`](decisions/), numbered, in the form *context → opti
 | [0015](decisions/0015-how-the-cryptography-is-used.md) | How X3DH and the Double Ratchet are used: no one-time prekeys, bundles bound to the UserId, a fixed 4090-byte envelope, ratchet state stored with each message | Accepted for phase 1 |
 | [0016](decisions/0016-plain-browser-ui-without-a-build-step.md) | A plain HTML/JS browser UI with no build step | Superseded by 0017 |
 | [0017](decisions/0017-react-ui-with-a-committed-build.md) | The browser UI is React + TypeScript, built in development and committed; the API lives under `/api` | Accepted |
+| [0018](decisions/0018-signed-acknowledgements.md) | Only a mailbox's recipient may acknowledge it: acks carry an Ed25519 signature; reads stay open | Accepted |
 
-Pending: 0006 TTL and expiry behaviour · the access credential (left open by 0007) · 0008 relay interface and envelope format.
+Pending: 0006 TTL and expiry behaviour · 0008 relay interface and envelope format.
 
 ## Specs
 
