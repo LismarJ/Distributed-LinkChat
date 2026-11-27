@@ -5,8 +5,9 @@ function explain(error: unknown): string {
   if (!(error instanceof ApiError)) return "Could not send.";
   switch (error.status) {
     case 409:
-      // The API cannot yet tell "never online" from "no relay answered".
-      return "Could not get your contact's keys: either they have never been online, or the relays are not answering right now. Try again later.";
+      return "Your contact has never been online, so the relays do not have their keys yet. You can write to them once they have connected once.";
+    case 503:
+      return "No relay is answering right now, so your contact's keys could not be fetched. Try again in a moment.";
     case 413:
       return "This message is too long. The limit is in bytes: emoji and accented letters take more than one.";
     default:
