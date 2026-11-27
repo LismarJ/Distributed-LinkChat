@@ -109,7 +109,7 @@ RelayActor.options(
 ).remote(i, R)
 ```
 
-Exact signatures and the `credential` are still to be fixed (ADR-0008 and ADR-0007, pending). The numbers in the decorator are starting values for the spike. The choices that are part of the design:
+Exact signatures are still to be fixed (ADR-0008, pending); the `credential` is settled: `ack` requires the recipient's signature, `fetch` and `wait_for_mail` take none ([ADR-0018](../decisions/0018-signed-acknowledgements.md)). The numbers in the decorator are starting values for the spike. The choices that are part of the design:
 
 - **A fixed set of logical relays.** `relay-0` to `relay-4` are names, not machines. The name is the relay's identity on the hash ring and it never changes. Which container currently runs `relay-2` is Ray's business.
 - **Supervised by Ray.** `max_restarts=-1`. If the relay's process crashes, Ray restarts it on the same node. If its node dies, Ray restarts it on any node with a free `relay_slot`. If there is none, the relay waits and starts as soon as a relay node is added.
