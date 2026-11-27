@@ -13,6 +13,7 @@ import pytest
 from linkchat.core.client.client import ChatClient
 from linkchat.core.client.history import History, MessageState
 from linkchat.core.client.mailbox_ids import mailbox_for
+from linkchat.core.clock import SystemClock
 from linkchat.core.crypto.sessions import NoBundle
 from linkchat.core.envelope import ENVELOPE_SIZE, envelope_id
 from linkchat.core.payload import Clock2, Payload
@@ -180,6 +181,39 @@ async def test_a_backlog_is_read_in_ratchet_order(tmp_path) -> None:
 
     assert await bob.receiver.receive_once(alice.me) == 30
     assert texts(bob, alice.me) == [f"m{n:02d}" for n in range(30)]
+
+
+async def test_a_held_message_is_announced_again_when_released(tmp_path) -> None:
+    """A message held behind a lost one shows by itself later: the UI must hear of it."""
+    relays = Relays()
+    alice = make_client(tmp_path / "alice.db", relays, send=relays.hold_only)
+    # A real clock: the manual one would jump the hold the moment anyone sleeps.
+    bob = ChatClient(
+        History(tmp_path / "bob.db"),
+        relays.cluster.directory(),
+        SystemClock(),
+        send=relays.naive_send,
+        hold_timeout_s=0.3,
+    )
+    alice.add_contact(bob.me)
+    bob.add_contact(alice.me)
+    await bob.publish()
+    await alice.send(bob.me, "lost")
+    await alice.send(bob.me, "held")
+    await alice.outbox.run_once()
+    held = relays.stored[1]  # "lost" never reaches a relay
+    for name in primaries(held.mailbox_id):
+        await relays.cluster.directory().gateway(name).store(held)
+    events = bob.events.subscribe()
+
+    assert await bob.receiver.receive_once(alice.me) == 1
+    assert bob.ordered_messages(alice.me) == []  # held, waiting for "lost"
+    first = events.get_nowait()
+
+    second = await asyncio.wait_for(events.get(), 2.0)
+    shown = bob.ordered_messages(alice.me)
+    assert (first.envelope_id, second.envelope_id) == (held.envelope_id,) * 2
+    assert [(d.message.text, d.after_gap) for d in shown] == [("held", True)]
 
 
 # -- someone else in the mailbox ---------------------------------------------------------

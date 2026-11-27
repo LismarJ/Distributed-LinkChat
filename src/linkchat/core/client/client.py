@@ -159,6 +159,21 @@ class ChatClient:
 
     def _received(self, peer: UserId, eid: EnvelopeId) -> None:
         self.events.publish(Event("message", peer, eid))
+        shown = {d.message.envelope_id for d in self.ordered_messages(peer)}
+        if eid not in shown:
+            # Held behind a missing message. It is released by time alone, with
+            # no new mail to say so: announce it again once the hold is over.
+            key = f"release:{eid}"
+            if key not in self._tasks:
+                announce = self._announce_later(key, peer, eid)
+                self._tasks[key] = asyncio.create_task(announce)
+
+    async def _announce_later(self, key: str, peer: UserId, eid: EnvelopeId) -> None:
+        try:
+            await self._clock.sleep(self._hold_timeout_s)
+            self.events.publish(Event("message", peer, eid))
+        finally:
+            self._tasks.pop(key, None)
 
     def _state_changed(self, eid: EnvelopeId) -> None:
         peer = self.history.peer_of(eid)
