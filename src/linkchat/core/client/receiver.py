@@ -40,7 +40,10 @@ Raises if the envelope cannot be read; it is then not acknowledged.
 """
 
 NO_CREDENTIAL = Credential(b"")
-"""ADR-0007 leaves the credential open: carried, not yet checked by relays."""
+"""For `fetch` and `wait_for_mail`, which return only ciphertext and need no proof."""
+
+SignAck = Callable[[UserId, MailboxId, Sequence[EnvelopeId]], Credential]
+"""(sender, mailbox, envelope ids) -> the signed credential relays require to ack."""
 
 
 class Receiver:
@@ -52,6 +55,7 @@ class Receiver:
         accept: AcceptFn,
         *,
         credential: Credential = NO_CREDENTIAL,
+        sign_ack: SignAck | None = None,
         timeout_s: float = FETCH_TIMEOUT_S,
         on_new: Callable[[UserId, EnvelopeId], None] | None = None,
     ) -> None:
@@ -60,6 +64,8 @@ class Receiver:
         self._clock = clock
         self._accept = accept
         self._credential = credential
+        self._sign_ack = sign_ack
+        """Without it acks carry no proof, and relays refuse them (ADR-0007)."""
         self._timeout_s = timeout_s
         self._unreadable: set[EnvelopeId] = set()
         self._on_new = on_new or (lambda peer, eid: None)
@@ -95,7 +101,7 @@ class Receiver:
             to_ack.append(eid)  # seen ones too: an earlier ack may have been lost
 
         if to_ack:
-            await self._ack(list(answered), mailbox, to_ack)
+            await self._ack(peer, list(answered), mailbox, to_ack)
         return new
 
     async def run(self, peer: UserId) -> None:
@@ -146,14 +152,25 @@ class Receiver:
             log.warning("cannot read envelope %s: %s", eid, why)
 
     async def _ack(
-        self, relays: list[RelayName], mailbox: MailboxId, eids: list[EnvelopeId]
+        self,
+        peer: UserId,
+        relays: list[RelayName],
+        mailbox: MailboxId,
+        eids: list[EnvelopeId],
     ) -> None:
-        """Best effort: a lost ack means the message comes back and `seen` drops it."""
+        """Best effort: a lost ack means the message comes back and `seen` drops it.
+
+        Signed once for every relay: the signature covers the mailbox and the
+        ids, not which relay receives it.
+        """
+        credential = (
+            self._sign_ack(peer, mailbox, eids) if self._sign_ack else self._credential
+        )
 
         async def one(name: RelayName) -> None:
             gateway = self._directory.gateway(name)
             await asyncio.wait_for(
-                gateway.ack(mailbox, self._credential, eids), self._timeout_s
+                gateway.ack(mailbox, credential, eids), self._timeout_s
             )
 
         results = await asyncio.gather(*(one(n) for n in relays), return_exceptions=True)

@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from linkchat.core.constants import RELAY_NAMES
+from linkchat.core.crypto.acks import check_ack
 from linkchat.core.crypto.bundle import check_published_bundle
 from linkchat.core.mailbox import MailboxStore, StoreOutcome
 from linkchat.core.ports import (
@@ -212,6 +213,7 @@ class _FakeGateway(RelayGateway):
     ) -> None:
         await self._cluster._transport(self._name)
         self._require_ready()
+        check_ack(credential, mailbox_id, envelope_ids)  # what the real relay runs
         self._store().ack(mailbox_id, list(envelope_ids))
 
     async def wait_for_mail(

@@ -8,11 +8,17 @@ from __future__ import annotations
 
 import pytest
 
-from linkchat.core.ports import RelayGone, RelayState, RelaySyncing, RelayUnreachable
+from linkchat.core.ports import (
+    CredentialRejected,
+    RelayGone,
+    RelayState,
+    RelaySyncing,
+    RelayUnreachable,
+)
 from linkchat.core.ring import primaries
 from linkchat.core.types import Credential, MailboxId
 
-from .conftest import make_record
+from .conftest import ack_credential, inbox, make_reader, make_record
 from .fakes.transport import FakeCluster
 
 CRED = Credential(b"cred")
@@ -24,16 +30,32 @@ def _primary(mailbox: str):
 
 async def test_store_fetch_ack_roundtrip():
     cluster = FakeCluster()
-    mailbox = "mb-roundtrip"
+    reader = make_reader()
+    mailbox = inbox(reader)
     gw = cluster.directory().gateway(_primary(mailbox))
     record = make_record(mailbox=mailbox, body=b"hi")
 
     await gw.store(record)
-    held = await gw.fetch(MailboxId(mailbox), CRED)
+    held = await gw.fetch(mailbox, CRED)
     assert [r.envelope_id for r in held] == [record.envelope_id]
 
-    await gw.ack(MailboxId(mailbox), CRED, [record.envelope_id])
-    assert await gw.fetch(MailboxId(mailbox), CRED) == []
+    eids = [record.envelope_id]
+    await gw.ack(mailbox, ack_credential(reader, mailbox, eids), eids)
+    assert await gw.fetch(mailbox, CRED) == []
+
+
+async def test_an_unsigned_ack_is_refused_and_deletes_nothing():
+    """Knowing the mailbox id is not enough to empty it (ADR-0007)."""
+    cluster = FakeCluster()
+    mailbox = inbox(make_reader())
+    gw = cluster.directory().gateway(_primary(mailbox))
+    record = make_record(mailbox=mailbox, body=b"keep me")
+    await gw.store(record)
+
+    with pytest.raises(CredentialRejected):
+        await gw.ack(mailbox, CRED, [record.envelope_id])
+
+    assert [r.envelope_id for r in await gw.fetch(mailbox, CRED)] == [record.envelope_id]
 
 
 async def test_killed_relay_is_unreachable():

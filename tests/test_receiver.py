@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 from pathlib import Path
 
 import pytest
@@ -11,16 +12,20 @@ import pytest
 from linkchat.core.client.history import History
 from linkchat.core.client.mailbox_ids import mailbox_for
 from linkchat.core.client.receiver import Receiver
+from linkchat.core.crypto.acks import sign_ack
 from linkchat.core.envelope import envelope_id, pad_payload, unpad_payload
 from linkchat.core.payload import Clock2, Payload, decode, encode
 from linkchat.core.ports import Record
 from linkchat.core.ring import preference_list, primaries
 from linkchat.core.types import RelayName, UserId
 
+from .conftest import SENDER, make_reader
 from .fakes.transport import FakeCluster
 
-ME = UserId("aaaa")
-PEER = UserId("bbbb")
+READER = make_reader()
+"""This client: a real identity, because relays only accept signed acks."""
+ME = READER.user_id
+PEER = SENDER
 INBOX = mailbox_for(PEER, ME)
 
 
@@ -73,7 +78,13 @@ def history(tmp_path: Path):
 
 @pytest.fixture
 def receiver(history, cluster) -> Receiver:
-    return Receiver(history, cluster.directory(), cluster.clock, plain_accept(history))
+    return Receiver(
+        history,
+        cluster.directory(),
+        cluster.clock,
+        plain_accept(history),
+        sign_ack=functools.partial(sign_ack, READER),
+    )
 
 
 def texts(history: History) -> list[str]:
