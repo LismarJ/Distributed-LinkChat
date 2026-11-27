@@ -209,9 +209,9 @@ Name these rather than wait to be caught by them. Each one's full reasoning is i
 | Read receipts | Delivery states stop at `sent` and `received`. The state that proves the distributed property is `sent` |
 | Several padding size classes | One fixed envelope size for every message. Simpler and leaks nothing |
 | Streaming delivery | A parked `wait_for_mail` plus a fetch does the same with less risk |
-| A React build step for the UI | [ADR-0016](../decisions/0016-plain-browser-ui-without-a-build-step.md). Three static files, no toolchain and no network at runtime, so the demonstration cannot fail on an `npm install` or a CDN. Cost: no component model and no TypeScript on the frontend, which is a real ceiling this UI does not reach |
+| A Node toolchain in the image | [ADR-0017](../decisions/0017-react-ui-with-a-committed-build.md). The UI is React + TypeScript, built on a developer's machine and committed, so the image has no Node, runs no `npm install`, and the browser fetches nothing from outside: the demonstration cannot fail on a build or a CDN. Cost: rebuild before committing a UI change |
 
-Also be honest about the two things we know are weak: a relay whose clock runs fast expires records early, because `expires_at` is an absolute instant compared against each relay's own clock (accepted for phase 1, `fault-tolerance.md` case 10); and the credential carried on every relay call is **not yet checked**, because ADR-0007 is still open. A relay therefore trusts any caller who knows a mailbox id, which is a real gap and is written down as one.
+Also be honest about the thing we know is weak: a relay whose clock runs fast expires records early, because `expires_at` is an absolute instant compared against each relay's own clock (accepted for phase 1, `fault-tolerance.md` case 10). And be ready to explain what is deliberately open: anyone who knows both user ids can compute a mailbox id and `fetch` it, but gets only fixed-size ciphertext; deleting from it (`ack`) takes the recipient's signature ([ADR-0018](../decisions/0018-signed-acknowledgements.md)).
 
 ## 9. If something fails mid-demonstration
 
@@ -248,7 +248,7 @@ If the slot is shorter, cut in this order: beat 6, then the mixed `one-of-each`,
 
 This runbook is written before rehearsal. Verify the following and update the research note with measured results:
 
-- **The credential carried on every relay call is not checked**, because ADR-0007 is still open. A relay trusts any caller who knows a mailbox id. Mailbox ids are derived per direction and are not guessable from a user id, so this is not wide open, but it is not access control either.
-- **`ray.util.metrics` is not wired up** (R9), so the relay counters are visible through `GET /relays` and the UI but not in Prometheus.
+- **Reading a mailbox takes no proof; deleting from it does.** A mailbox id is computable by anyone who knows **both** user ids of a conversation. Such a caller can `fetch` its ciphertext, which is useless without the keys, but an `ack` must carry the recipient's signature over the mailbox and the envelope ids, checked by every relay ([ADR-0018](../decisions/0018-signed-acknowledgements.md)). Bundles are checked too: a relay refuses one whose identity key does not hash to the user id (`BundleRejected`), so nobody can replace a user's keys.
+- **`ray.util.metrics` is not wired up** (R9), so the relay counters are visible through `GET /api/relays` and the UI but not in Prometheus.
 - **Token authentication between containers has not been tested.** The cluster runs on a user-defined Docker network and is not exposed beyond the published client ports and the dashboard.
 - **The client-mid-send scenario does not reliably kill the client during its relay call.** It queues the message durably, then kills the client and a relay together; the send may have completed before the kill lands. Present it as a simultaneous two-element failure test. The outbox recovery and crash-consistency claims are covered by the dedicated history and outbox tests.

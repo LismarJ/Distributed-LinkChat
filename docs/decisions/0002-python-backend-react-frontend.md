@@ -23,7 +23,9 @@ The team chose **Python for the backend with a React frontend**, on team familia
 
 Partly a misreading, and worth getting right because it affects our test topology. Image size is paid **once per image**, not per container — twenty containers from the same image share the same read-only layers on disk. What is paid per container is resident memory, roughly **40–70 MB** for an `asyncio` Python process. Twenty containers is therefore on the order of 1–1.4 GB of RAM, which is fine on a development laptop.
 
-What image size does cost is **build and pull time**, which we feel on every iteration. Mitigations: `python:3.12-slim` as the base, a multi-stage build, `uv` with a committed lockfile for fast deterministic installs, and `.dockerignore` discipline. Target under 120 MB per image.
+What image size does cost is **build and pull time**, which we feel on every iteration. Mitigations: `python:3.12-slim` as the base, dependencies installed in their own layer so that editing our code does not reinstall them, and `.dockerignore` discipline.
+
+*Amended 2026-11-27.* This paragraph first set a target of under 120 MB per image, and listed a multi-stage build and `uv` as mitigations. Both were written on 2026-11-10, before [ADR-0010](0010-build-phase-1-on-ray.md) made Ray mandatory for phase 1, and neither holds now. Ray with its `[default]` extra is about 237 MB unpacked on its own, so no target under it is reachable; measured on 2026-11-27, the image is about 185 MB compressed (what is pulled) and the installed packages about 390 MB unpacked, of which our own code, browser UI included, is under 2 MB. The `Dockerfile` is one stage and installs with `pip`. We do not trim Ray (its Java jars and unused libraries could go, for perhaps 60 MB) because size affects only build and pull time, not anything graded, and removing parts of Ray by hand risks breaking it. Phase 2 removes Ray, and with it most of the image.
 
 **2. "The GIL will bottleneck the crypto."**
 

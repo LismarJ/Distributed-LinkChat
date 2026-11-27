@@ -25,9 +25,9 @@ from linkchat.core.types import Credential, MailboxId
 from linkchat.ray_runtime.bootstrap import NAMESPACE, bootstrap
 from linkchat.ray_runtime.gateway import RayRelayDirectory
 
-from .conftest import make_record
+from .conftest import ack_credential, inbox, make_reader, make_record
 
-CREDENTIAL = Credential(b"test-credential")  # ADR-0007 pending; carried, not checked
+CREDENTIAL = Credential(b"test-credential")  # fetch and wait take no proof; acks do
 
 
 @pytest.fixture(scope="module")
@@ -73,7 +73,8 @@ async def test_bootstrap_is_idempotent(ray_cluster):
 async def test_store_fetch_ack_roundtrip(ray_cluster):
     """A record stored through the gateway is fetched back, then acknowledged."""
     directory = RayRelayDirectory()
-    mailbox = MailboxId("mailbox-roundtrip")
+    reader = make_reader()
+    mailbox = inbox(reader)
     primary = relay_name(0)
     gateway = directory.gateway(primary)
     await _wait_ready(gateway)
@@ -88,7 +89,8 @@ async def test_store_fetch_ack_roundtrip(ray_cluster):
     held = await gateway.fetch(mailbox, CREDENTIAL)
     assert [r.envelope_id for r in held] == [record.envelope_id]
 
-    await gateway.ack(mailbox, CREDENTIAL, [record.envelope_id])
+    eids = [record.envelope_id]
+    await gateway.ack(mailbox, ack_credential(reader, mailbox, eids), eids)
     assert await gateway.fetch(mailbox, CREDENTIAL) == []
 
 
@@ -209,7 +211,8 @@ async def test_handoff_loop_returns_a_hinted_record_to_its_primary(ray_cluster):
 
 async def test_wait_for_mail_returns_at_once_when_mail_is_already_there(ray_cluster):
     directory = RayRelayDirectory()
-    mailbox = MailboxId("mailbox-wait-present")
+    reader = make_reader()
+    mailbox = inbox(reader)
     gateway = directory.gateway(primaries(mailbox)[0])
     await _wait_ready(gateway)
 
@@ -219,7 +222,8 @@ async def test_wait_for_mail_returns_at_once_when_mail_is_already_there(ray_clus
     await gateway.store(record)
 
     assert await gateway.wait_for_mail(mailbox, CREDENTIAL, 5.0) is True
-    await gateway.ack(mailbox, CREDENTIAL, [record.envelope_id])
+    eids = [record.envelope_id]
+    await gateway.ack(mailbox, ack_credential(reader, mailbox, eids), eids)
 
 
 async def test_wait_for_mail_times_out_and_leaves_nothing_behind(ray_cluster):
@@ -246,7 +250,8 @@ async def test_a_store_wakes_a_parked_reader(ray_cluster):
     other way round is the test above.
     """
     directory = RayRelayDirectory()
-    mailbox = MailboxId("mailbox-wait-woken")
+    reader = make_reader()
+    mailbox = inbox(reader)
     primary = primaries(mailbox)[0]
     gateway = directory.gateway(primary)
     await _wait_ready(gateway)
@@ -261,7 +266,49 @@ async def test_a_store_wakes_a_parked_reader(ray_cluster):
     await gateway.store(record)
 
     assert await asyncio.wait_for(parked, 10.0) is True
-    await gateway.ack(mailbox, CREDENTIAL, [record.envelope_id])
+    eids = [record.envelope_id]
+    await gateway.ack(mailbox, ack_credential(reader, mailbox, eids), eids)
+
+
+async def test_a_relay_refuses_a_bundle_that_is_not_the_users(ray_cluster):
+    """The binding check runs inside the actor, and crosses Ray as our error."""
+    from linkchat.core.crypto.bundle import encode_bundle
+    from linkchat.core.crypto.identity import user_id_of
+    from linkchat.core.crypto.suite import new_x3dh_state
+    from linkchat.core.ports import BundleRejected
+
+    bob, mallory = new_x3dh_state(), new_x3dh_state()
+    bob_id = user_id_of(bob.bundle.identity_key)
+    gateway = RayRelayDirectory().gateway(relay_name(0))
+    await _wait_ready(gateway)
+
+    await gateway.publish_prekeys(bob_id, encode_bundle(bob.bundle))
+    with pytest.raises(BundleRejected):
+        await gateway.publish_prekeys(bob_id, encode_bundle(mallory.bundle))
+
+    assert await gateway.get_prekeys(bob_id) == encode_bundle(bob.bundle)
+
+
+async def test_a_relay_refuses_an_unsigned_ack_and_keeps_the_record(ray_cluster):
+    """The ack check runs inside the actor: knowing the mailbox id is not enough."""
+    from linkchat.core.ports import CredentialRejected
+
+    reader = make_reader()
+    mailbox = inbox(reader)
+    gateway = RayRelayDirectory().gateway(primaries(mailbox)[0])
+    await _wait_ready(gateway)
+    record = make_record(
+        mailbox=str(mailbox), body=b"not-yours", expires_at=time.time() + 3600
+    )
+    await gateway.store(record)
+    eids = [record.envelope_id]
+
+    with pytest.raises(CredentialRejected):
+        await gateway.ack(mailbox, CREDENTIAL, eids)
+    assert [r.envelope_id for r in await gateway.fetch(mailbox, CREDENTIAL)] == eids
+
+    await gateway.ack(mailbox, ack_credential(reader, mailbox, eids), eids)
+    assert await gateway.fetch(mailbox, CREDENTIAL) == []
 
 
 # -- destructive: keep this LAST -----------------------------------------

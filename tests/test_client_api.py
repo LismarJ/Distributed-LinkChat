@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -12,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from linkchat.client_app.api import create_app
 from linkchat.core.client.client import ChatClient
-from linkchat.core.constants import RELAY_COUNT
+from linkchat.core.constants import RELAY_COUNT, RELAY_NAMES
 from linkchat.core.envelope import MAX_PLAINTEXT
 from linkchat.core.ring import primaries
 
@@ -45,7 +47,7 @@ async def deliver(sender: ChatClient, receiver: ChatClient) -> None:
 async def test_me_is_the_user_id(friends) -> None:
     alice, _ = friends
     async with api(alice) as http:
-        response = await http.get("/me")
+        response = await http.get("/api/me")
 
     assert response.status_code == 200
     assert response.json() == {"user_id": alice.me}
@@ -57,8 +59,8 @@ async def test_adding_a_contact(tmp_path) -> None:
     bob = make_client(tmp_path / "bob.db", relays)
 
     async with api(alice) as http:
-        added = await http.post("/contacts", json={"user_id": bob.me})
-        listed = await http.get("/contacts")
+        added = await http.post("/api/contacts", json={"user_id": bob.me})
+        listed = await http.get("/api/contacts")
 
     assert added.status_code == 201
     assert listed.json() == {"contacts": [bob.me]}
@@ -71,7 +73,7 @@ async def test_adding_a_contact(tmp_path) -> None:
 async def test_a_malformed_user_id_is_refused(friends, user_id: str, code: int) -> None:
     alice, _ = friends
     async with api(alice) as http:
-        response = await http.post("/contacts", json={"user_id": user_id})
+        response = await http.post("/api/contacts", json={"user_id": user_id})
 
     assert response.status_code == code
 
@@ -79,7 +81,7 @@ async def test_a_malformed_user_id_is_refused(friends, user_id: str, code: int) 
 async def test_oneself_is_not_a_contact(friends) -> None:
     alice, _ = friends
     async with api(alice) as http:
-        response = await http.post("/contacts", json={"user_id": alice.me})
+        response = await http.post("/api/contacts", json={"user_id": alice.me})
 
     assert response.status_code == 400
 
@@ -91,11 +93,11 @@ async def test_a_message_goes_through_both_apis(friends) -> None:
     alice, bob = friends
     async with api(alice) as alice_http, api(bob) as bob_http:
         sent = await alice_http.post(
-            f"/conversations/{bob.me}/messages", json={"text": "hola"}
+            f"/api/conversations/{bob.me}/messages", json={"text": "hola"}
         )
         await deliver(alice, bob)
-        theirs = (await bob_http.get(f"/conversations/{alice.me}")).json()
-        mine = (await alice_http.get(f"/conversations/{bob.me}")).json()
+        theirs = (await bob_http.get(f"/api/conversations/{alice.me}")).json()
+        mine = (await alice_http.get(f"/api/conversations/{bob.me}")).json()
 
     assert sent.status_code == 201
     assert sent.json()["state"] == "pending"
@@ -111,8 +113,10 @@ async def test_unknown_peer_is_404(friends) -> None:
     alice, _ = friends
     stranger = "0" * 64
     async with api(alice) as http:
-        read = await http.get(f"/conversations/{stranger}")
-        write = await http.post(f"/conversations/{stranger}/messages", json={"text": "x"})
+        read = await http.get(f"/api/conversations/{stranger}")
+        write = await http.post(
+            f"/api/conversations/{stranger}/messages", json={"text": "x"}
+        )
 
     assert (read.status_code, write.status_code) == (404, 404)
 
@@ -125,20 +129,38 @@ async def test_no_bundle_is_a_clear_409(tmp_path) -> None:
 
     async with api(alice) as http:
         response = await http.post(
-            f"/conversations/{bob.me}/messages", json={"text": "hi"}
+            f"/api/conversations/{bob.me}/messages", json={"text": "hi"}
         )
 
     assert response.status_code == 409
     assert "keys" in response.json()["detail"]
 
 
+async def test_relays_not_answering_is_a_503_not_a_409(tmp_path) -> None:
+    """Bob has published, but no relay answers: retrying later will work."""
+    relays = Relays()
+    alice = make_client(tmp_path / "alice.db", relays)
+    bob = make_client(tmp_path / "bob.db", relays)
+    alice.add_contact(bob.me)
+    await bob.publish()
+    relays.cluster.kill(*RELAY_NAMES)
+
+    async with api(alice) as http:
+        response = await http.post(
+            f"/api/conversations/{bob.me}/messages", json={"text": "hi"}
+        )
+
+    assert response.status_code == 503
+    assert "no relay answered" in response.json()["detail"]
+
+
 async def test_empty_and_oversized_messages_are_refused(friends) -> None:
     alice, bob = friends
-    path = f"/conversations/{bob.me}/messages"
+    path = f"/api/conversations/{bob.me}/messages"
     async with api(alice) as http:
         empty = await http.post(path, json={"text": ""})
         huge = await http.post(path, json={"text": "x" * (MAX_PLAINTEXT + 1)})
-        listed = await http.get(f"/conversations/{bob.me}")
+        listed = await http.get(f"/api/conversations/{bob.me}")
 
     assert empty.status_code == 422
     assert huge.status_code == 413
@@ -148,8 +170,8 @@ async def test_empty_and_oversized_messages_are_refused(friends) -> None:
 async def test_the_api_never_returns_ciphertext(friends) -> None:
     alice, bob = friends
     async with api(alice) as http:
-        await http.post(f"/conversations/{bob.me}/messages", json={"text": "plain"})
-        body = (await http.get(f"/conversations/{bob.me}")).text
+        await http.post(f"/api/conversations/{bob.me}/messages", json={"text": "plain"})
+        body = (await http.get(f"/api/conversations/{bob.me}")).text
 
     [item] = alice.history.due_outbox(now=1e12)
     assert "plain" in body
@@ -178,9 +200,10 @@ def test_the_websocket_announces_a_new_message(tmp_path) -> None:
     alice.add_contact(bob.me)
     asyncio.run(bob.publish())
 
-    with TestClient(create_app(alice)) as http, http.websocket_connect("/ws") as socket:
-        sent = http.post(f"/conversations/{bob.me}/messages", json={"text": "hola"})
-        event = socket.receive_json()
+    path = f"/api/conversations/{bob.me}/messages"
+    with TestClient(create_app(alice)) as http, http.websocket_connect("/api/ws") as ws:
+        sent = http.post(path, json={"text": "hola"})
+        event = ws.receive_json()
 
     assert event == {
         "kind": "message",
@@ -195,7 +218,7 @@ def test_the_websocket_announces_a_new_message(tmp_path) -> None:
 async def test_relays_endpoint_marks_the_three_primaries(friends) -> None:
     alice, bob = friends
     async with api(alice) as http:
-        response = await http.get("/relays", params={"peer": bob.me})
+        response = await http.get("/api/relays", params={"peer": bob.me})
 
     assert response.status_code == 200
     relays = response.json()
@@ -212,7 +235,7 @@ async def test_relays_endpoint_shows_a_killed_relay_as_unreachable(friends) -> N
     alice._directory._cluster.kill(victim)  # the fake cluster behind the directory
 
     async with api(alice) as http:
-        relays = (await http.get("/relays", params={"peer": bob.me})).json()
+        relays = (await http.get("/api/relays", params={"peer": bob.me})).json()
 
     by_name = {r["name"]: r for r in relays}
     assert by_name[victim]["state"] == "unreachable"
@@ -223,7 +246,7 @@ async def test_relays_endpoint_shows_a_killed_relay_as_unreachable(friends) -> N
 async def test_relays_endpoint_without_a_peer_marks_nothing(friends) -> None:
     alice, _ = friends
     async with api(alice) as http:
-        relays = (await http.get("/relays")).json()
+        relays = (await http.get("/api/relays")).json()
 
     assert len(relays) == RELAY_COUNT
     assert not any(r["holds_mailbox"] for r in relays)
@@ -232,33 +255,82 @@ async def test_relays_endpoint_without_a_peer_marks_nothing(friends) -> None:
 async def test_relays_endpoint_refuses_an_unknown_peer(friends) -> None:
     alice, _ = friends
     async with api(alice) as http:
-        response = await http.get("/relays", params={"peer": "f" * 64})
+        response = await http.get("/api/relays", params={"peer": "f" * 64})
 
     assert response.status_code == 404
 
 
 async def test_the_browser_ui_is_served_and_needs_no_network(friends) -> None:
-    """The UI ships inside the package: no build step, no CDN (ADR-0016)."""
+    """The committed build ships in the package and fetches nothing from outside."""
     alice, _ = friends
     async with api(alice) as http:
         page = await http.get("/")
-        script = await http.get("/app.js")
-        style = await http.get("/app.css")
+        assets = [
+            await http.get("/" + ref.lstrip("/"))
+            for ref in re.findall(r'(?:src|href)="(/assets/[^"]+)"', page.text)
+        ]
 
     assert page.status_code == 200
     assert "LinkChat" in page.text
-    assert script.status_code == 200 and style.status_code == 200
+    assert len(assets) >= 2  # at least the script and the stylesheet
+    assert all(asset.status_code == 200 for asset in assets)
     # Nothing may be fetched from a third party at runtime.
-    for asset in (page, script, style):
+    for asset in (page, *assets):
         assert "//cdn" not in asset.text
-        assert "http://" not in asset.text.replace("http://test", "")
-        assert "https://" not in asset.text
+        assert not re.search(r"""(?:src|href)=["']?https?://""", asset.text)
+        assert not re.search(r"""(?:fetch|import)\(["']https?://""", asset.text)
 
 
 async def test_the_api_still_wins_over_the_static_mount(friends) -> None:
     """The UI is mounted at `/`, so every API route must be matched first."""
     alice, bob = friends
     async with api(alice) as http:
-        assert (await http.get("/me")).json() == {"user_id": alice.me}
-        assert (await http.get("/contacts")).status_code == 200
-        assert (await http.get("/conversations/" + bob.me)).status_code == 200
+        assert (await http.get("/api/me")).json() == {"user_id": alice.me}
+        assert (await http.get("/api/contacts")).status_code == 200
+        assert (await http.get("/api/conversations/" + bob.me)).status_code == 200
+        assert (await http.get("/api/relays")).status_code == 200
+
+
+# -- the built UI --------------------------------------------------------------------
+
+
+async def test_the_ui_is_served_beside_the_api(friends, tmp_path) -> None:
+    alice, _ = friends
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html><title>LinkChat</title>")
+    app = create_app(alice, run_client=False, static_dir=static)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+        page = await http.get("/")
+        me = await http.get("/api/me")
+
+    assert page.status_code == 200
+    assert "LinkChat" in page.text
+    assert me.json() == {"user_id": alice.me}
+
+
+async def test_without_a_build_only_the_api_answers(friends, tmp_path) -> None:
+    alice, _ = friends
+    app = create_app(alice, run_client=False, static_dir=tmp_path / "missing")
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+        page = await http.get("/")
+
+    assert page.status_code == 404
+
+
+def test_a_closed_websocket_unsubscribes_at_once(tmp_path) -> None:
+    alice = make_client(tmp_path / "alice.db", Relays())
+
+    with TestClient(create_app(alice)) as http:
+        with http.websocket_connect("/api/ws"):
+            pass
+        # No event was published: the server noticed the close by itself.
+        for _ in range(100):
+            if not alice.events._subscribers:
+                break
+            time.sleep(0.01)
+        assert not alice.events._subscribers

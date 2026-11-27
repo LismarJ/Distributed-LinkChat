@@ -85,34 +85,11 @@ ADRs live in [`decisions/`](decisions/), numbered, in the form *context → opti
 
 | [0014](decisions/0014-phase-1-scope-cuts.md) | Phase 1 scope: optional features deferred, and no direct client-to-client path | Accepted |
 | [0015](decisions/0015-how-the-cryptography-is-used.md) | How X3DH and the Double Ratchet are used: no one-time prekeys, bundles bound to the UserId, a fixed 4090-byte envelope, ratchet state stored with each message | Accepted for phase 1 |
-| [0016](decisions/0016-plain-browser-ui-without-a-build-step.md) | Phase 1 browser UI ships without a build step, amending ADR-0002 | Accepted |
+| [0016](decisions/0016-plain-browser-ui-without-a-build-step.md) | A plain HTML/JS browser UI with no build step | Superseded by 0017 |
+| [0017](decisions/0017-react-ui-with-a-committed-build.md) | The browser UI is React + TypeScript, built in development and committed; the API lives under `/api` | Accepted |
+| [0018](decisions/0018-signed-acknowledgements.md) | Only a mailbox's recipient may acknowledge it: acks carry an Ed25519 signature; reads stay open | Accepted |
 
-**0006 and 0008 were never written as their own files**, even though both
-decisions shipped in code and are described in prose elsewhere (TTL and
-expiry in `design/fault-tolerance.md` case 10 and `core/mailbox.py`; the
-relay interface and envelope format in `design/ray-architecture.md` and
-`core/envelope.py`/`core/ports.py`, frozen at S1). Requirement 7 of the
-delivery checklist is that the reasoning is written down, and right now it
-is written down everywhere except the two files whose numbers are cited for
-it. Worth closing before the defense — formalizing them from the existing
-prose is quick, and the content already exists.
-
-Pending: the access credential (left open by 0007).
-
-## Guides
-
-Dated working notes: what was built, what was found, and what it changed.
-Not a design document — read `design/` and the decisions table for the
-settled shape of the system. These are the record of how it got there.
-
-| Doc | What it covers |
-|---|---|
-| [`guides/2026-11-15-phase-1-publish-and-reconciliation.md`](guides/2026-11-15-phase-1-publish-and-reconciliation.md) | Reconciling two independently drafted core interfaces into one frozen `ports.py` |
-| [`guides/2026-11-16-fake-transport-and-r5-r7-specs.md`](guides/2026-11-16-fake-transport-and-r5-r7-specs.md) | The fault-injecting fake transport (C2) and the specs for three-copy send and repair (R5–R7) |
-| [`guides/2026-11-16-r3-r4-ray-runtime.md`](guides/2026-11-16-r3-r4-ray-runtime.md) | The relay actor and gateway, written against the documented Ray behaviour pre-spike |
-| [`guides/2026-11-24-demonstration-runbook.md`](guides/2026-11-24-demonstration-runbook.md) | The rehearsed, beat-by-beat script for the delivery demonstration, with pacing and what to say at each failure |
-| [`guides/2026-11-25-review-and-durability-fixes.md`](guides/2026-11-25-review-and-durability-fixes.md) | A full review of `src/linkchat`: three defects found in the graded mechanisms (including one that could lose a confirmed message under two failures), the fixes, and the first container run of the fault-injection scenarios (gate G3) |
-| [`guides/2026-11-25-commit-series-walkthrough.md`](guides/2026-11-25-commit-series-walkthrough.md) | The same fixes, explained commit by commit for a reader new to the codebase |
+Pending: 0006 TTL and expiry behaviour · 0008 relay interface and envelope format.
 
 ## Specs
 

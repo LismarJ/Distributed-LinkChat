@@ -21,7 +21,7 @@ import msgpack
 from x3dh import Bundle
 
 from linkchat.core.crypto.identity import user_id_of
-from linkchat.core.ports import RelayDirectory, RelayError
+from linkchat.core.ports import BundleRejected, RelayDirectory, RelayError
 from linkchat.core.types import RelayName, UserId
 
 log = logging.getLogger(__name__)
@@ -37,6 +37,15 @@ BUNDLE_TIMEOUT_S = 5.0
 
 class InvalidBundle(ValueError):
     """A bundle is not something this build can trust."""
+
+
+class NoRelayAnswered(RelayError):
+    """Not one relay answered a bundle fetch: down, unreachable or timed out.
+
+    Distinct from "every relay answered and none has it", which `fetch_bundle`
+    reports as None. The first means "try again soon"; the second means the
+    peer has never been online, and retrying will not help until they are.
+    """
 
 
 def encode_bundle(bundle: Bundle) -> bytes:
@@ -146,42 +155,67 @@ async def publish_bundle(
     return confirmed
 
 
+def check_published_bundle(user_id: UserId, raw: bytes) -> None:
+    """What a relay runs before storing a bundle. Raises `BundleRejected`.
+
+    The same binding check a reader applies (`decode_bundle` with `expected`),
+    moved forward to the relay so that a forged or garbage bundle is never
+    stored in the first place. A relay cannot verify more than that, and does
+    not need to: the signature on the signed prekey is checked by the reader.
+    """
+    try:
+        decode_bundle(raw, expected=user_id)
+    except InvalidBundle as exc:
+        raise BundleRejected(f"bundle refused for {user_id}: {exc}") from exc
+
+
 async def fetch_bundle(directory: RelayDirectory, user_id: UserId) -> Bundle | None:
-    """The first bundle that passes `decode_bundle`, or None.
+    """The first bundle that passes `decode_bundle`, or None if nobody has one.
 
     Asks every relay at once and keeps the first valid answer, so relays that
     hang (a relay being restarted) cost at most one timeout, not one each.
     Skips relays that are down, that have nothing, and that serve a bundle for
     the wrong identity. Logs the skips; does not stop on them.
+
+    Returns None only when at least one relay answered. When none did, there is
+    no telling whether the peer has a bundle, so it raises instead.
+
+    Raises:
+        NoRelayAnswered: every relay was down, unreachable or timed out.
     """
 
-    async def one(name: RelayName) -> Bundle | None:
+    async def one(name: RelayName) -> tuple[bool, Bundle | None]:
+        """(whether the relay answered, the valid bundle it served if any)."""
         gateway = directory.gateway(name)
         try:
             raw = await asyncio.wait_for(gateway.get_prekeys(user_id), BUNDLE_TIMEOUT_S)
         except (RelayError, TimeoutError) as exc:
             log.info("fetch from %s failed: %r", name, exc)
-            return None
+            return False, None
         if raw is None:
-            return None
+            return True, None
         try:
-            return decode_bundle(raw, expected=user_id)
+            return True, decode_bundle(raw, expected=user_id)
         except InvalidBundle as exc:
             log.warning(
                 "relay %s served an invalid bundle for %s: %s", name, user_id, exc
             )
-            return None
+            return True, None
 
     tasks = [asyncio.create_task(one(name)) for name in directory.relay_names]
+    answered = 0
     try:
         for finished in asyncio.as_completed(tasks):
             try:
-                bundle = await finished
+                did_answer, bundle = await finished
             except Exception as exc:  # one relay misbehaving is never fatal
                 log.warning("fetch of %s's bundle raised: %r", user_id, exc)
                 continue
             if bundle is not None:
                 return bundle
+            answered += did_answer
+        if answered == 0:
+            raise NoRelayAnswered(f"no relay answered for {user_id}'s bundle")
         return None
     finally:
         for task in tasks:

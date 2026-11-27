@@ -1,7 +1,7 @@
 # ADR-0007: One mailbox per direction of each conversation
 
 **Status:** accepted for phase 1, pending team review · **Date:** 2026-11-19
-**Applies to:** phase 1 · **Leaves open:** the access credential for `fetch` and `ack`, and the invitation format
+**Applies to:** phase 1 · **Leaves open:** the invitation format (the access credential was settled by [ADR-0018](0018-signed-acknowledgements.md))
 
 ## Context
 
@@ -39,4 +39,4 @@ and reads her own mail at `mailbox_for(bob, alice)`. Implemented in `linkchat/co
 
 **Effect on the relay track.** None. A relay treats `MailboxId` as opaque, and placement (`ring.py`) hashes it whatever it contains.
 
-**Still open.** What proves a client may read or acknowledge a mailbox. The `credential` is carried through every call and not yet checked (`relay_actor.py`, `fetch`). Until it is, anyone who can compute a mailbox id can read its ciphertext, which stays unreadable without the keys, or acknowledge it, which deletes it early. That is a known limit for phase 1, recorded here so that it is a decision rather than an oversight.
+**Settled by [ADR-0018](0018-signed-acknowledgements.md) on 2026-11-27.** This paragraph recorded the open question of what proves a client may read or acknowledge a mailbox: anyone who can compute a mailbox id could read its ciphertext, which stays unreadable without the keys, or acknowledge it, which deletes it early. Acknowledging now requires the recipient's signature; reading stays open by decision, since it returns only fixed-size ciphertext.

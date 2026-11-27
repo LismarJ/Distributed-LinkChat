@@ -26,6 +26,7 @@ from linkchat.core.client.ordering import (
 from linkchat.core.client.outbox import Outbox, SendFn
 from linkchat.core.client.overlay import RelayView, overlay
 from linkchat.core.client.receiver import Receiver
+from linkchat.core.crypto.acks import identity_signer, sign_ack
 from linkchat.core.crypto.bundle import encode_bundle, fetch_bundle, publish_bundle
 from linkchat.core.crypto.channel import SecureChannel
 from linkchat.core.crypto.identity import load_or_create_identity
@@ -74,7 +75,12 @@ class ChatClient:
         """What the UI subscribes to: a conversation changed, fetch it again."""
         self.outbox = Outbox(history, send, clock, on_change=self._state_changed)
         self.receiver = Receiver(
-            history, directory, clock, self._accept, on_new=self._received
+            history,
+            directory,
+            clock,
+            self._accept,
+            sign_ack=functools.partial(sign_ack, identity_signer(self.identity)),
+            on_new=self._received,
         )
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._started = False
@@ -159,6 +165,21 @@ class ChatClient:
 
     def _received(self, peer: UserId, eid: EnvelopeId) -> None:
         self.events.publish(Event("message", peer, eid))
+        shown = {d.message.envelope_id for d in self.ordered_messages(peer)}
+        if eid not in shown:
+            # Held behind a missing message. It is released by time alone, with
+            # no new mail to say so: announce it again once the hold is over.
+            key = f"release:{eid}"
+            if key not in self._tasks:
+                announce = self._announce_later(key, peer, eid)
+                self._tasks[key] = asyncio.create_task(announce)
+
+    async def _announce_later(self, key: str, peer: UserId, eid: EnvelopeId) -> None:
+        try:
+            await self._clock.sleep(self._hold_timeout_s)
+            self.events.publish(Event("message", peer, eid))
+        finally:
+            self._tasks.pop(key, None)
 
     def _state_changed(self, eid: EnvelopeId) -> None:
         peer = self.history.peer_of(eid)

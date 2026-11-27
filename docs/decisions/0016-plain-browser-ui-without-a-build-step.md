@@ -1,6 +1,6 @@
 # ADR-0016: The phase 1 browser UI ships without a build step
 
-**Status:** accepted · **Date:** 2026-11-24 · **Deciders:** project team
+**Status:** superseded by [ADR-0017](0017-react-ui-with-a-committed-build.md) on 2026-11-26 · **Date:** 2026-11-24 · **Deciders:** project team
 **Applies to:** phase 1 (tasks C9, C10) · **Amends:** [ADR-0002](0002-python-backend-react-frontend.md) for phase 1 only
 **Relates to:** [ADR-0014](0014-phase-1-scope-cuts.md) (the overlay view is reduced, not cut)
 

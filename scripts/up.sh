@@ -12,8 +12,8 @@
 #
 #   head      `ray status` answers inside the container
 #   nodes     the head has seen as many nodes as we started
-#   relays    all five relay actors report READY through a client's /relays
-#   clients   each client answers GET /me on its published port
+#   relays    all five relay actors report READY through a client's /api/relays
+#   clients   each client answers GET /api/me on its published port
 #
 # The relay wait is the one that is easy to get wrong. A relay actor exists as
 # soon as the bootstrap returns, but it comes up SYNCING and refuses client work
@@ -147,7 +147,7 @@ for ((i = 0; i < CLIENTS; i++)); do indices+=("${i}"); done
 for index in "${indices[@]}"; do
   port="$(client_port "${index}")"
   client_answers() { curl --silent --fail --connect-timeout 2 --max-time 10 \
-    "http://localhost:${port}/me"; }
+    "http://localhost:${port}/api/me"; }
   wait_for "$(echo "${CLIENT_PREFIX}-${index}") on port ${port}" \
     "${CLIENT_TIMEOUT_S}" client_answers
 done
@@ -162,7 +162,7 @@ step "waiting for every relay to serve"
 first_port="$(client_port "${indices[0]}")"
 relays_ready() {
   curl --silent --fail --connect-timeout 2 --max-time 10 \
-    "http://localhost:${first_port}/relays" |
+    "http://localhost:${first_port}/api/relays" |
     pyjson "
 states = [r['state'] for r in data]
 sys.exit(0 if states and all(s == 'ready' for s in states) else 1)

@@ -79,6 +79,14 @@ class CredentialRejected(RelayError):
     """
 
 
+class BundleRejected(RelayError):
+    """A published bundle is malformed, or its identity key is not the user's.
+
+    The relay keeps whatever it held before. Definite, like `MailboxFull`: the
+    same bytes will be refused again, so retrying is pointless.
+    """
+
+
 # ---------------------------------------------------------------------------
 # What crosses the boundary
 # ---------------------------------------------------------------------------
@@ -218,6 +226,10 @@ class RelayGateway(Protocol):
         Idempotent. Acknowledging something already gone succeeds. The caller
         must have committed the messages to its own storage first, so that a
         crash between the two loses nothing.
+
+        Raises `CredentialRejected` unless `credential` is the mailbox
+        recipient's signature over these ids (`core.crypto.acks`): a mailbox id
+        is computable by anyone who knows both user ids, so it proves nothing.
         """
         ...
 
@@ -238,6 +250,11 @@ class RelayGateway(Protocol):
 
         The bundle is signed by its owner, so a relay cannot substitute one.
         Republished by the owner whenever it comes online.
+
+        Raises `BundleRejected`, keeping the bundle already held, if the bytes
+        do not decode or the identity key in them does not hash to `user_id`:
+        otherwise anyone could replace a user's keys with garbage and make them
+        unreachable until their next republish.
         """
         ...
 

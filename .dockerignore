@@ -22,3 +22,6 @@ data/
 *.sqlite*
 *.db
 .env
+
+# The UI source: the image ships only its committed build, in src/ (ADR-0017).
+frontend/

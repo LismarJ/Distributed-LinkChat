@@ -40,6 +40,8 @@ import ray
 
 from linkchat.core.clock import SystemClock
 from linkchat.core.constants import RELAY_COUNT, RELAY_NAMES
+from linkchat.core.crypto.acks import check_ack
+from linkchat.core.crypto.bundle import check_published_bundle
 from linkchat.core.mailbox import MailboxStore, StoreOutcome
 from linkchat.core.ports import (
     MailboxFull,
@@ -215,14 +217,23 @@ class RelayActor:
         credential: Credential,
         envelope_ids: list[EnvelopeId],
     ) -> None:
-        """Replace these records with tombstones. Idempotent."""
+        """Replace these records with tombstones. Idempotent.
+
+        Only the mailbox's recipient may: refused with `CredentialRejected`
+        unless `credential` is their signature over these ids (ADR-0007).
+        """
         self._require_ready()
+        check_ack(credential, mailbox_id, envelope_ids)
         self._store.ack(mailbox_id, envelope_ids)
 
     @ray.method(concurrency_group="client")
     async def publish_prekeys(self, user_id: UserId, bundle: bytes) -> None:
-        """Store a signed prekey bundle. The owner republishes on reconnect."""
+        """Store a signed prekey bundle. The owner republishes on reconnect.
+
+        Refuses one that is not the user's (`BundleRejected`), keeping the old.
+        """
         self._require_ready()
+        check_published_bundle(user_id, bundle)
         self._prekeys[user_id] = bundle
 
     @ray.method(concurrency_group="client")
