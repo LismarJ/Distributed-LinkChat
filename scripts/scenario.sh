@@ -94,10 +94,11 @@ fail() { echo "FAIL ${SCENARIO}: $*" >&2; return 1; }
 # `grep -c ''` gets right for both.
 count_lines() { [ -z "$1" ] && echo 0 || printf '%s\n' "$1" | grep -c ''; }
 
-# One HTTP call to a client's API. Short timeouts: a client we just killed must
-# report as unreachable quickly rather than hanging the scenario.
+# One HTTP call to a client's API, which lives under /api (ADR-0017). Short
+# timeouts: a client we just killed must report as unreachable quickly rather
+# than hanging the scenario.
 http() {
-  local method="$1" port="$2" path="$3" body="${4:-}"
+  local method="$1" port="$2" path="/api$3" body="${4:-}"
   if [ -n "${body}" ]; then
     curl --silent --show-error --fail-with-body \
       --connect-timeout 3 --max-time 15 \
