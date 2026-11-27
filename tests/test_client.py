@@ -14,7 +14,8 @@ from linkchat.core.client.client import ChatClient
 from linkchat.core.client.history import History, MessageState
 from linkchat.core.client.mailbox_ids import mailbox_for
 from linkchat.core.clock import SystemClock
-from linkchat.core.crypto.sessions import NoBundle
+from linkchat.core.constants import RELAY_NAMES
+from linkchat.core.crypto.sessions import NoBundle, RelaysUnavailable
 from linkchat.core.envelope import ENVELOPE_SIZE, envelope_id
 from linkchat.core.payload import Clock2, Payload
 from linkchat.core.ports import Record
@@ -135,6 +136,25 @@ async def test_the_first_message_needs_the_peers_bundle(tmp_path) -> None:
     assert texts(alice, bob.me) == []
 
     await bob.publish()
+    await alice.send(bob.me, "now")
+    assert texts(alice, bob.me) == ["now"]
+
+
+async def test_no_relay_answering_is_not_mistaken_for_no_bundle(tmp_path) -> None:
+    """Every relay down: still a `NoBundle` to old callers, but a distinct one."""
+    relays = Relays()
+    alice = make_client(tmp_path / "alice.db", relays)
+    bob = make_client(tmp_path / "bob.db", relays)
+    alice.add_contact(bob.me)
+    await bob.publish()
+    relays.cluster.kill(*RELAY_NAMES)
+
+    with pytest.raises(RelaysUnavailable) as raised:
+        await alice.send(bob.me, "anyone?")
+    assert isinstance(raised.value, NoBundle)
+    assert texts(alice, bob.me) == []
+
+    relays.cluster.revive(*RELAY_NAMES)
     await alice.send(bob.me, "now")
     assert texts(alice, bob.me) == ["now"]
 

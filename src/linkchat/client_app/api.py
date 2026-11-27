@@ -36,7 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from linkchat.core.client.client import ChatClient
-from linkchat.core.crypto.sessions import NoBundle
+from linkchat.core.crypto.sessions import NoBundle, RelaysUnavailable
 from linkchat.core.envelope import PayloadTooLarge
 from linkchat.core.types import UserId
 
@@ -141,6 +141,11 @@ def create_app(
         target = known_peer(peer)
         try:
             eid = await client.send(target, body.text)
+        except RelaysUnavailable as exc:  # before NoBundle: it is one
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "no relay answered for this contact's keys; try again shortly",
+            ) from exc
         except NoBundle as exc:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,

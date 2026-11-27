@@ -16,6 +16,7 @@ from x3dh import Bundle, KeyAgreementException
 from linkchat.core.constants import RELAY_NAMES
 from linkchat.core.crypto.bundle import (
     InvalidBundle,
+    NoRelayAnswered,
     decode_bundle,
     encode_bundle,
     fetch_bundle,
@@ -28,6 +29,7 @@ from linkchat.core.crypto.suite import (
     new_x3dh_state,
     start_ratchet,
 )
+from linkchat.core.ports import BundleRejected
 from linkchat.core.types import UserId
 
 from .fakes.transport import FakeCluster
@@ -198,7 +200,8 @@ async def test_nobody_has_it() -> None:
     assert await fetch_bundle(FakeCluster().directory(), bob_id) is None
 
 
-async def test_every_relay_down_is_not_an_error() -> None:
+async def test_every_relay_down_says_so_rather_than_nobody_has_it() -> None:
+    """No answer is not the same as "no bundle": the caller must be able to tell."""
     cluster = FakeCluster()
     bob, bob_id = identity()
     cluster.kill(*RELAY_NAMES)
@@ -206,6 +209,41 @@ async def test_every_relay_down_is_not_an_error() -> None:
     assert (
         await publish_bundle(cluster.directory(), bob_id, encode_bundle(bob.bundle)) == 0
     )
+    with pytest.raises(NoRelayAnswered):
+        await fetch_bundle(cluster.directory(), bob_id)
+
+
+async def test_one_relay_answering_is_enough_to_say_nobody_has_it() -> None:
+    _, bob_id = identity()
+    cluster = FakeCluster()
+    cluster.kill(*RELAY_NAMES[1:])
+
+    assert await fetch_bundle(cluster.directory(), bob_id) is None
+
+
+async def test_a_relay_refuses_someone_elses_bundle_and_keeps_the_owners() -> None:
+    """Mallory cannot overwrite Bob's keys: the relay checks the binding first."""
+    cluster = FakeCluster()
+    bob, bob_id = identity()
+    mallory, _ = identity()
+    await publish_bundle(cluster.directory(), bob_id, encode_bundle(bob.bundle))
+    gateway = cluster.directory().gateway(RELAY_NAMES[0])
+
+    with pytest.raises(BundleRejected):
+        await gateway.publish_prekeys(bob_id, encode_bundle(mallory.bundle))
+    with pytest.raises(BundleRejected):
+        await gateway.publish_prekeys(bob_id, b"\x00garbage")
+
+    assert await gateway.get_prekeys(bob_id) == encode_bundle(bob.bundle)
+
+
+async def test_publishing_a_forged_bundle_confirms_nowhere() -> None:
+    cluster = FakeCluster()
+    _, bob_id = identity()
+    mallory, _ = identity()
+
+    forged = encode_bundle(mallory.bundle)
+    assert await publish_bundle(cluster.directory(), bob_id, forged) == 0
     assert await fetch_bundle(cluster.directory(), bob_id) is None
 
 
@@ -272,3 +310,15 @@ async def test_hanging_relays_do_not_add_up(monkeypatch) -> None:
 
     assert fetched == without_prekeys(bob.bundle)
     assert time.monotonic() - started < 0.5  # sequential would take about 4 s
+
+
+async def test_every_relay_hanging_is_no_answer(monkeypatch) -> None:
+    """Relays that time out did not answer, exactly like relays that are down."""
+    from linkchat.core.crypto import bundle as bundle_module
+
+    monkeypatch.setattr(bundle_module, "BUNDLE_TIMEOUT_S", 0.1)
+    _, bob_id = identity()
+    directory = _HangingDirectory(FakeCluster().directory(), set(RELAY_NAMES))
+
+    with pytest.raises(NoRelayAnswered):
+        await fetch_bundle(directory, bob_id)
