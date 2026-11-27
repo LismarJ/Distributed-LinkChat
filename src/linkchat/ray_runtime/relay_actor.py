@@ -40,6 +40,7 @@ import ray
 
 from linkchat.core.clock import SystemClock
 from linkchat.core.constants import RELAY_COUNT, RELAY_NAMES
+from linkchat.core.crypto.bundle import check_published_bundle
 from linkchat.core.mailbox import MailboxStore, StoreOutcome
 from linkchat.core.ports import (
     MailboxFull,
@@ -221,8 +222,12 @@ class RelayActor:
 
     @ray.method(concurrency_group="client")
     async def publish_prekeys(self, user_id: UserId, bundle: bytes) -> None:
-        """Store a signed prekey bundle. The owner republishes on reconnect."""
+        """Store a signed prekey bundle. The owner republishes on reconnect.
+
+        Refuses one that is not the user's (`BundleRejected`), keeping the old.
+        """
         self._require_ready()
+        check_published_bundle(user_id, bundle)
         self._prekeys[user_id] = bundle
 
     @ray.method(concurrency_group="client")

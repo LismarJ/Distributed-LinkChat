@@ -272,6 +272,25 @@ async def test_a_store_wakes_a_parked_reader(ray_cluster):
 # to hash. Anything added to this file goes above this line.
 
 
+async def test_a_relay_refuses_a_bundle_that_is_not_the_users(ray_cluster):
+    """The binding check runs inside the actor, and crosses Ray as our error."""
+    from linkchat.core.crypto.bundle import encode_bundle
+    from linkchat.core.crypto.identity import user_id_of
+    from linkchat.core.crypto.suite import new_x3dh_state
+    from linkchat.core.ports import BundleRejected
+
+    bob, mallory = new_x3dh_state(), new_x3dh_state()
+    bob_id = user_id_of(bob.bundle.identity_key)
+    gateway = RayRelayDirectory().gateway(relay_name(0))
+    await _wait_ready(gateway)
+
+    await gateway.publish_prekeys(bob_id, encode_bundle(bob.bundle))
+    with pytest.raises(BundleRejected):
+        await gateway.publish_prekeys(bob_id, encode_bundle(mallory.bundle))
+
+    assert await gateway.get_prekeys(bob_id) == encode_bundle(bob.bundle)
+
+
 async def test_dead_relay_becomes_a_relay_error(ray_cluster):
     """Killing a relay makes the next call raise one of ours, not a Ray type."""
     directory = RayRelayDirectory()
