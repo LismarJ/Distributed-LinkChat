@@ -85,6 +85,17 @@ The notes below are the sources the reports are built from; they keep the full d
 |---|---|
 | [`experiments/2026-11-26-phase-1-initial-experiments.md`](experiments/2026-11-26-phase-1-initial-experiments.md) | The methodology's required initial experiment, as four records in its format: two relay containers killed together; failover timing (container ~31 s versus worker process ~1.3 s); every relay wiped at once; and the concurrency experiment that found `wait_for_mail` silently inert because each Ray concurrency group is its own event loop |
 
+## Guides
+
+Step-by-step walkthroughs for contributors, including commit series explanations written so a junior developer can understand the purpose of every change.
+
+| Doc | What it covers |
+|---|---|
+| [`guides/2026-11-27-methodology-compliance-commit-series.md`](guides/2026-11-27-methodology-compliance-commit-series.md) | The seven commits that added all five required phase 1 artifacts, the AI-use disclosure, and the revised three-phase plan — with per-commit rationale written for a first-time reader |
+| [`guides/2026-11-25-commit-series-walkthrough.md`](guides/2026-11-25-commit-series-walkthrough.md) | The six commits that added the React UI, signed acks, frontend improvements and bug fixes — same format |
+| [`guides/2026-11-25-review-and-durability-fixes.md`](guides/2026-11-25-review-and-durability-fixes.md) | The code review that found three defects in the graded mechanisms, and the fixes |
+| [`guides/2026-11-24-demonstration-runbook.md`](guides/2026-11-24-demonstration-runbook.md) | Pre-flight checklist, the seven scenarios, what to say if a grader asks about a skip, resource targets |
+
 ## Decisions
 
 ADRs live in [`decisions/`](decisions/), numbered, in the form *context → options → decision → consequences*.
