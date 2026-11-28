@@ -4,28 +4,39 @@ Project: **P08 · Mensajería segura descentralizada** — Sistemas Distribuidos
 
 Every conclusion, insight and decision in this project is written down here rather than left in conversation.
 
-## Current state (2026-11-25)
+## Current state (2026-11-27)
 
-The examiners have split the project into two phases:
+The examiners have split the project into three graded phases (15% / 50% / 35%); the weights and the full requirement-by-requirement audit are in [`planning/methodology-compliance.md`](planning/methodology-compliance.md):
 
-| | Phase 1 | Phase 2 |
-|---|---|---|
-| Delivery | **2026-12-01** | **2027-01-01** |
-| Platform | Ray and Python; use what Ray offers, do not reimplement it | No Ray; everything ours |
-| Must survive | Any two elements failing at once (the head node is never killed) | Network partitions as well |
+| | Phase 1 — 15% | Phase 2 — 50% | Phase 3 — 35% |
+|---|---|---|---|
+| Date | **2026-12-01** (submission) | **2027-01-01** (architecture report) | Final examination (oral, individual) |
+| Platform | Ray and Python; use what Ray offers, do not reimplement it | No Ray; everything ours. **"Normally Go"** — unresolved | Both, compared |
+| Must survive | Any two elements failing at once (the head node is never killed) | Any two, with no exempt component, and network partitions as well | Demonstrated under a fault campaign |
 
-Phase 1 is built, reviewed and verified. `scripts/check.sh` is green (481
+Phase 1 is built, reviewed and verified. `scripts/check.sh` is green (507
 passed, 20 skipped), and `scripts/scenario.sh all` passes all seven scenarios
 against real Docker containers — the two-simultaneous-failure demonstration,
 sending to an offline recipient, and a full relay wipe that both clients'
-history survives untouched. Gates G0 through G3 are answered; what remains is
-G4 (the full demonstration script end to end), G5 (three clean rehearsals and
-the finished written deliverable), and two small decisions with no
-implementation risk. See
+history survives untouched. All five of the methodology's required phase 1
+artifacts exist and its exit gate is answerable from measurement rather than
+assumption. Gates G0 through G3 are answered; what remains for 1 December is
+G4 (the full demonstration script end to end) and G5 (three clean rehearsals
+and the finished written deliverable). See
 [`guides/2026-11-25-review-and-durability-fixes.md`](guides/2026-11-25-review-and-durability-fixes.md)
-for the detail and the measured numbers.
+for the review that found and fixed three defects in the graded mechanisms, and
+[`experiments/2026-11-26-phase-1-initial-experiments.md`](experiments/2026-11-26-phase-1-initial-experiments.md)
+for the measured numbers.
 
-**Where to start reading:** [`planning/phase-1-work-plan.md`](planning/phase-1-work-plan.md) for what to do next, [`design/ray-architecture.md`](design/ray-architecture.md) for the phase 1 design, [`design/fault-tolerance.md`](design/fault-tolerance.md) for failures, edge cases and tradeoffs, [`planning/phase-plan.md`](planning/phase-plan.md) for how the two phases relate.
+**The three things that are not code.** Ranked in
+[`planning/methodology-compliance.md`](planning/methodology-compliance.md) §9:
+the submission is a **GitHub issue** that must exist for the project to count
+as submitted; the methodology says phase 2 "should normally use **Go**", which
+our phase 2 strategy had assumed would be Python, and that question belongs
+with the instructors rather than with us; and **phase 3 is 35% of the mark and
+was unplanned** until this week.
+
+**Where to start reading:** [`planning/phase-1-work-plan.md`](planning/phase-1-work-plan.md) for what to do next, [`design/ray-architecture.md`](design/ray-architecture.md) for the phase 1 design, [`design/fault-tolerance.md`](design/fault-tolerance.md) for failures, edge cases and tradeoffs, [`planning/phase-plan.md`](planning/phase-plan.md) for how the three phases relate, and [`design/behavioral-contract.md`](design/behavioral-contract.md) for the frozen contract both implementations are measured against.
 
 ## Reports
 
@@ -54,16 +65,25 @@ The notes below are the sources the reports are built from; they keep the full d
 | Doc | What it covers |
 |---|---|
 | [`planning/phase-1-work-plan.md`](planning/phase-1-work-plan.md) | **What to do next.** The execution plan for phase 1: definition of done, the split between the two developers, six gates starting with the Ray spike, every task with owner, dependency and done-when check, the person-day budget, how to use Claude Code, the cut list and the risks |
-| [`planning/phase-plan.md`](planning/phase-plan.md) | The two phases: what each requires, what phase 2 must replace, what carries over, the milestone schedule and the scope priorities |
+| [`planning/phase-plan.md`](planning/phase-plan.md) | The three phases: what each requires and delivers, what phase 2 must replace, what carries over, the phase 3 outline, the milestone schedule and the scope priorities |
+| [`planning/methodology-compliance.md`](planning/methodology-compliance.md) | **Audit against the examiners' methodology.** The three phases and their weights, the five required phase 1 artifacts, the exit gate, submission mechanics, the F0–F21 scenario mapping, the common baseline item by item, and the ranked actions. Re-run before each submission |
 
 ## Design
 
 | Doc | What it covers |
 |---|---|
+| [`design/behavioral-contract.md`](design/behavioral-contract.md) | **The frozen contract.** Every externally visible operation and outcome, the four delivery states, the seven guarantees and the six things deliberately not promised. Names no Ray concept, so it should survive the redesign unchanged |
+| [`design/middleware-dependency-map.md`](design/middleware-dependency-map.md) | **What Ray does for us, and what we already do.** 13 requirements Ray provides and the question each poses for the native redesign, 14 that are already ours, and the five failure semantics we measured rather than assumed |
 | [`design/ray-architecture.md`](design/ray-architecture.md) | **The phase 1 design.** Five named relay actors supervised by Ray, the fixed ring, send/receive/forget, repair, the client, security claims, design patterns, code structure, the demonstration |
 | [`design/fault-tolerance.md`](design/fault-tolerance.md) | The fault model, why three copies and no majority, element-by-element and pair analysis, eighteen edge cases, what each decision gains and loses, how each claim is tested |
 | [`design/technology-stack.md`](design/technology-stack.md) | Component-by-component stack for phase 1, with licences, and what changes in phase 2 |
 | [`design/architecture-options.md`](design/architecture-options.md) | The study that compared five architectures and chose option C. Its mechanism details are the starting point for phase 2 |
+
+## Experiments
+
+| Doc | What it covers |
+|---|---|
+| [`experiments/2026-11-26-phase-1-initial-experiments.md`](experiments/2026-11-26-phase-1-initial-experiments.md) | The methodology's required initial experiment, as four records in its format: two relay containers killed together; failover timing (container ~31 s versus worker process ~1.3 s); every relay wiped at once; and the concurrency experiment that found `wait_for_mail` silently inert because each Ray concurrency group is its own event loop |
 
 ## Decisions
 

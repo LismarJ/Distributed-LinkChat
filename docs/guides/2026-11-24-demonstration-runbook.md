@@ -16,13 +16,13 @@ Two people present. One drives the terminal, the other drives the browsers and d
 
 | Check | Command | Expected |
 |---|---|---|
-| The suite is green | `scripts/check.sh` | `all checks passed`; 481 passed, 20 skipped |
+| The suite is green | `scripts/check.sh` | `all checks passed`; 507 passed, 20 skipped |
 | Docker is running | `docker version` | a server version, not a pipe error |
 | The image builds | `scripts/up.sh --build` | ends with `the cluster is up` |
 | The scenarios pass | `scripts/scenario.sh all` | seven `PASS` lines in the summary |
 | Clean slate again | `scripts/down.sh` | removes the containers, keeps the volumes |
 
-The 20 skipped tests are the client crash-consistency cases. They need `fork` and `SIGKILL`, so they are skipped on a Windows host and run on Linux. If the defense machine is Linux, expect 501 passed and no skips. Say this if asked rather than letting a grader find a skip and wonder.
+The 20 skipped tests are the client crash-consistency cases. They need `fork` and `SIGKILL`, so they are skipped on a Windows host and run on Linux. If the defense machine is Linux, expect 527 passed and no skips. Say this if asked rather than letting a grader find a skip and wonder.
 
 **Record the resource measurements during rehearsal.** The target setup has ten containers: one head, seven relay nodes and two clients. `--shm-size 1g` per container is already set in `scripts/env.sh` for the Ray object store. Record Docker Desktop peak memory use; do not use estimates as rehearsal results. The **image size is measured: 498,384,886 bytes (475 MiB)**.
 

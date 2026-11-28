@@ -16,7 +16,7 @@ Phase 1 is due **2026-12-01** and is built on Ray. Phase 2 is due
 
 Phase 1 is implemented and verified on real containers: encryption, ordering,
 local history, replicated writes, sync-on-restart, hinted handoff, the browser
-UI, and the fault-injection scenarios. `scripts/check.sh` is green (481
+UI, and the fault-injection scenarios. `scripts/check.sh` is green (507
 passed, 20 skipped — the skips need `fork`/`SIGKILL` and run on Linux CI and
 in the containers). `scripts/scenario.sh all` passes 7 for 7 against real
 Docker containers, including every two-simultaneous-failure case the
@@ -36,6 +36,7 @@ deliverable, and two small decisions — no implementation work remains).
 | [`docs/planning/phase-1-work-plan.md`](docs/planning/phase-1-work-plan.md) | What to do next, who does it, and the gates |
 | [`docs/design/ray-architecture.md`](docs/design/ray-architecture.md) | The phase 1 design |
 | [`docs/design/fault-tolerance.md`](docs/design/fault-tolerance.md) | Failures, edge cases, and what each decision costs |
+| [`docs/planning/methodology-compliance.md`](docs/planning/methodology-compliance.md) | How this project measures up against the examiners' methodology, and what is still missing |
 
 The design in one line: **Ray keeps the relays alive; we keep the data alive.**
 
@@ -55,12 +56,17 @@ src/linkchat/core/         all application logic. Never imports Ray (ADR-0013)
   client/                  outbox, ordering, SQLite history, the overlay view
   crypto/                  X3DH and the Double Ratchet (ADR-0009, ADR-0015)
 src/linkchat/ray_runtime/  the Ray implementation of those ports. Phase 2 deletes it
-src/linkchat/client_app/   FastAPI, the WebSocket, and the plain browser UI
-                           (no build step — ADR-0016)
+src/linkchat/client_app/   FastAPI, the WebSocket, and the built browser UI
+                           under static/ (committed — ADR-0017)
+frontend/              React + TypeScript + Vite source for that UI.
+                       `npm run build` writes into client_app/static/
 spike/                 the Ray behaviour the design assumed, now measured
 scripts/               one shell script per operation. No Docker Compose
 tests/                 including the check that core stays Ray-free
-docs/                  research, design, decisions, planning, reports, guides
+docs/                  research, design, decisions, planning, reports,
+                       guides, experiments
+ai_use.yml             the AI-assisted engineering disclosure the methodology
+                       requires of every assessed repository
 ```
 
 ## Getting set up

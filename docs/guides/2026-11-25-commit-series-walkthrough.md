@@ -235,7 +235,11 @@ calculated value actually gets saved, not just computed every time.
 ## 5. `fix(client)`: clicking "copy my ID" twice could hide your own ID
 
 **Commit:** `d082b3f`
-**File:** [`app.js`](../../src/linkchat/client_app/static/app.js)
+**File:** `src/linkchat/client_app/static/app.js`, as it was on 2026-11-25.
+That file no longer exists: [ADR-0017](../decisions/0017-react-ui-with-a-committed-build.md)
+replaced the hand-written UI with a React build the next day, and the same
+fix lives in the React component. The commit below is still the record of
+the defect and the reasoning.
 
 ### What was actually happening
 
