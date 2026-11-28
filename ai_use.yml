@@ -1,0 +1,77 @@
+# AI-assisted engineering disclosure
+#
+# Required by the examiners' methodology, section "AI-assisted engineering and
+# disclosure". The governing principle there is the one we worked to:
+#
+#   "You may delegate work to AI, but you may not delegate responsibility for
+#    correctness."
+#
+# Counts below are verifiable from the git history, not estimates:
+#   git log --format='%an|%(trailers:key=Co-Authored-By,valueonly)'
+
+ai_use:
+  used: true
+
+  tools:
+    - Claude Code  # Anthropic, CLI and VS Code extension
+  models:
+    - Claude Opus 4.8
+    - Claude Opus 5
+    - Claude Sonnet 5
+    - Claude Fable 5.2
+
+  activities:
+    - architecture discussion
+    - documentation and reports
+    - implementation
+    - test generation
+    - debugging
+    - code review
+
+  # Where AI was deliberately NOT used, by a decision taken on 2026-11-12 and
+  # recorded in docs/planning/phase-1-work-plan.md section 7. The reasoning was
+  # that at the defence each author has to explain why two simultaneous
+  # failures cannot lose a confirmed message, and reading an explanation is not
+  # the same as having built the thing.
+  not_delegated:
+    - the replication and repair mechanisms (tasks R5 to R7)
+    - the cryptographic integration (task C6)
+
+  verification:
+    - public tests  # 507 passing, 20 skipped; ruff, ruff format, mypy --strict
+    - fault/workload campaign  # scripts/scenario.sh all, 7 of 7 against real containers
+    - seeded randomized fault injection  # tests/test_fuzz_two_failures.py
+    - manual review
+    - cross-review between the two authors  # whoever did not write a piece reviews it
+
+  # Honest scope of the numbers: 41 of 111 commits carry a Claude
+  # Co-Authored-By trailer. That is a lower bound on AI involvement rather than
+  # an exact measure, because the trailer records where a session produced the
+  # commit and not every AI-assisted edit was committed from a session.
+  commits_total: 111
+  commits_with_ai_coauthor: 41
+
+  authors:
+    - Jocdan Lismar López Mantecón
+    - Lianet Soto Aguirre
+
+  # Specific cases where AI output was rejected or corrected rather than
+  # accepted, kept because the methodology's defence may ask to "explain an
+  # AI-generated suggestion you accepted or rejected".
+  notable_corrections:
+    - >-
+      A first fault-injection harness passed every seed, including against a
+      deliberately broken durability rule. It was rewritten to take two relays
+      out together and to prefer wipes over kills, after which it caught a
+      planted bug at seed 21. A suite that has never failed is evidence of
+      nothing.
+    - >-
+      A regression test for the two-failure durability fix passed for the wrong
+      reason: it ran one repair round in one order, and the stand-in happened to
+      hand the record back before the primary destroyed it. Rewritten to run
+      several rounds over both relays, as the background loops really do.
+    - >-
+      A probe appeared to confirm that waking a parked reader across Ray
+      concurrency groups worked. It was a race, not a feature. Measuring the
+      mechanism (thread and event-loop ids) rather than the outcome settled it.
+      See docs/experiments/2026-11-26-phase-1-initial-experiments.md, E4.
