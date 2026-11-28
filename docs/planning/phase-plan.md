@@ -1,22 +1,40 @@
-# The two phases
+# The three phases
 
-**Status:** working plan · **Date:** 2026-11-11
-**Source:** the examiners' clarifications of 2026-11-11, recorded in [`../research/00-problem-analysis.md`](../research/00-problem-analysis.md) section 6 and in [ADR-0010](../decisions/0010-build-phase-1-on-ray.md) and [ADR-0013](../decisions/0013-ray-free-core-for-phase-2.md).
+**Status:** working plan · **Date:** 2026-11-11 · **Revised:** 2026-11-26
+**Source:** the examiners' clarifications of 2026-11-11, recorded in [`../research/00-problem-analysis.md`](../research/00-problem-analysis.md) section 6 and in [ADR-0010](../decisions/0010-build-phase-1-on-ray.md) and [ADR-0013](../decisions/0013-ray-free-core-for-phase-2.md); and, from 2026-11-26, the examiners' written *Final Project Methodology*.
+
+**Revision of 2026-11-26.** The methodology was read in full and it changes
+three things this document had wrong. It defines **three** graded phases, not
+two. It weights them **15 / 50 / 35**, so phase 1 is the smallest. And it says
+the native implementation "should normally use Go", which this plan had assumed
+would be Python. The audit is
+[`methodology-compliance.md`](methodology-compliance.md); the Go question is
+section 1.2 there and is the project's largest open risk.
 
 ---
 
 ## 1. What each phase requires
 
-| | Phase 1 | Phase 2 |
-|---|---|---|
-| Delivery | **2026-12-01** | **2027-01-01** |
-| Platform | Ray and Python. Use every Ray feature that applies naturally; do not reimplement what Ray offers | No Ray at all. Everything redesigned and implemented by us |
-| Failures to tolerate | Any two elements at once | Not yet stated; we assume at least the same |
-| Partitions | Not required | **Required** |
-| Head node | Exists, is never killed | Does not exist |
-| Constant in both | Docker without Compose; the brief's requirements R1 to R9; reasoning about edge cases and tradeoffs |
+| | Phase 1 | Phase 2 | Phase 3 |
+|---|---|---|---|
+| Weight | **15%** | **50%** | **35%** |
+| Date | **2026-12-01** (submission) | **2027-01-01** (architecture report) | Final examination (oral, individual) |
+| Platform | Ray and Python. Use every Ray feature that applies naturally; do not reimplement what Ray offers | No Ray. Everything redesigned and implemented by us. **"Normally Go"** — unresolved, see the audit | Both, side by side |
+| Delivers | Working prototype, architecture diagram, behavioural contract, middleware dependency map, initial experiment | The native system and a five-section architecture report | Fault/workload campaign, guarantee analysis, Ray/native comparison, individual defence |
+| Failures to tolerate | Any two elements at once | Any two, with **no exempt component** | Demonstrated under the campaign |
+| Partitions | Not required | **Required** | Tested |
+| Head node | Exists, is never killed | Does not exist | — |
+| Constant in all three | Docker without Compose; the brief's requirements R1 to R9; **the externally visible behavioural contract**; reasoning about edge cases and tradeoffs |
 
-Today is 2026-11-11. Phase 1 has 20 days. Phase 2 has 31 days after that.
+The behavioural contract is the invariant the methodology cares most about: the
+internal architecture is *expected* to change across the Ray boundary, and the
+contract is what both implementations are measured against. It is written and
+frozen in [`../design/behavioral-contract.md`](../design/behavioral-contract.md).
+
+**Phase 3 has a consequence for phase 2's housekeeping:** the Ray/native
+comparison is worth 5% and cannot be done if the phase 1 system is deleted or
+left unrunnable. Keep it working and tagged, and take its measurements while it
+is alive.
 
 ## 2. What phase 2 has to replace
 
@@ -95,9 +113,46 @@ Settled on 2026-11-12 by [ADR-0014](../decisions/0014-phase-1-scope-cuts.md). Th
 | Dec 17 to 24 | Placement over live membership, rebalancing, anti-entropy, partition tests with Docker networks |
 | Dec 25 to 31 | Hardening, demonstration, written deliverable |
 
-## 6. Questions still open with the examiners
+## 6. Phase 3 outline
 
-- Does phase 2 keep the two-failure requirement, raise it, or leave it to us?
-- In phase 2, is there any element that is guaranteed not to fail, as the head is in phase 1?
-- Is the written deliverable expected in Spanish? ([ADR-0003](../decisions/0003-english-for-all-documentation.md) records English as our working choice.)
-- Is each delivery a live defense, a submission, or both?
+Added 2026-11-26. It is 35% of the mark and was previously unplanned.
+
+| Goal | What it means |
+|---|---|
+| **Fault/workload campaign** (10%) | The eight scenario classes of the methodology's common minimum campaign, plus the project-specific ones, each written as an experiment record. The mapping from our scenario names to the course's F0–F21 vocabulary is in [`methodology-compliance.md`](methodology-compliance.md) §6 |
+| **Correctness/guarantee analysis** (5%) | What the system guarantees under those faults, as observable histories, and the evidence for each claim |
+| **Ray/native comparison** (5%) | Phase 1 against phase 2: implementation complexity, explicit mechanism count, dependencies, startup, latency percentiles, recovery time, failure behaviour, and guarantees present in one and absent in the other. **No requirement that the native version wins** — the likely honest conclusion is that it is smaller because it omits general-purpose scheduling and object management we never needed |
+| **Individual technical defence** (10%) | Each author alone: predict a fault before it is injected, locate where a guarantee is implemented, name an invariant, explain why an operation is idempotent, state the consistency model, identify a single point of failure, justify a timeout, modify a small part live, and explain an AI suggestion accepted or rejected |
+| **Reproducibility, report, disclosure** (5%) | One command to run it, the report, and [`../../ai_use.yml`](../../ai_use.yml) |
+
+Two preparations that have to start before January:
+
+- **Measure phase 1 while it runs.** Recovery time is measured (~31 s for a
+  node, ~1.3 s for a worker process). Startup time, latency percentiles under a
+  concurrent workload, and mechanism counts are not, and they are inputs to the
+  comparison.
+- **Rehearse the individual defence by swapping tracks.** The work plan already
+  says each author presents the other's work once; phase 3 turns that from good
+  practice into a graded requirement.
+
+## 7. Questions with the examiners
+
+The methodology of 2026-11-26 answered three of the four we had open.
+
+| Question | Answer |
+|---|---|
+| Does phase 2 keep the two-failure requirement? | **Yes**, and for the oral defence of the native system |
+| Is any element guaranteed not to fail in phase 2, as the head is in phase 1? | **No.** No exemption is given, and phase 2 has no head by design |
+| Is each delivery a live defence, a submission, or both? | Parts 1 and 2 are **submissions**; part 3 is the **individual oral defence** |
+| Is the written deliverable expected in Spanish? | **Still open.** [ADR-0003](../decisions/0003-english-for-all-documentation.md) records English as our working choice |
+
+Still to ask, and the more urgent of the two:
+
+- **May phase 2 be Python rather than Go?** The methodology says Go is the
+  normal choice and that another language needs a strong domain reason. Ours is
+  the cryptography ([ADR-0009](../decisions/0009-adopt-a-cryptography-library.md)):
+  the X3DH and Double Ratchet libraries we adopted are Python, and rewriting in
+  Go reinstates the exact schedule risk that decision retired. The methodology's
+  own rule is to ask first and that silence means no, so this needs sending,
+  not deciding. [`methodology-compliance.md`](methodology-compliance.md) §1.2.
+- Spanish or English for the written deliverable, as above.
